@@ -1,6 +1,6 @@
 # 📁 cold_storage_simulation/
 
-```
+
 # 🧊 Cold Storage Simulation – Factor Coverage Breakdown
 
 | #  | Factor                          | Covered Details                                                                                 | Skipped / Simplified                          |
@@ -50,7 +50,7 @@
 3. Spoilage chemical modeling
 4. Humidity & condensation control (latent heat)
 
-```
+
 
 ```
 ├── config/                            # 🔧 All configurable parameters
