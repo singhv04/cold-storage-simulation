@@ -52,6 +52,8 @@
 
 
 
+# 🧪 Setup
+
 ```
 ├── config/                            # 🔧 All configurable parameters
 │   ├── example_config.json            # Master configuration file
