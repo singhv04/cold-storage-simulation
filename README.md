@@ -1,6 +1,58 @@
 # 📁 cold_storage_simulation/
 
 ```
+# 🧊 Cold Storage Simulation – Factor Coverage Breakdown
+
+| #  | Factor                          | Covered Details                                                                                 | Skipped / Simplified                          |
+|----|--------------------------------|--------------------------------------------------------------------------------------------------|------------------------------------------------|
+| 1  | **Airflow Modeling**           | Zone-wise airflow, duct/fan placement, velocity, pressure, stacking interference               | CFD-level turbulence models                   |
+| 2  | **Stacking Layout**            | Stack height, gaps, blocking airflow, layout logic                                              | Crate deformation dynamics                    |
+| 3  | **Product Type**               | Per-product thermal properties (heat capacity, respiration) via config                          | Water content variability, spoilage chemistry |
+| 4  | **Packaging Types**            | Crate, box, sack modeling — thermal insulation and airflow resistance                           | Internal packaging layering                   |
+| 5  | **Multi-Chamber Support**      | Multiple isolated chambers with independent controls and workloads                              | Air leakage across chambers                   |
+| 6  | **Sensor Bias/Delay**          | Lag between surface and core sensor, configurable error margins                                 | Sensor aging/drift over time                  |
+| 7  | **Worker Heat Modeling**       | Shift timing, human presence-induced heat, movement-based zone impact                           | Activity-based metabolic rate variation       |
+| 8  | **External Weather Influence** | Hourly/daylight profile, seasonal variation, wall transfer rate, wall orientation               | Real building shape and solar load            |
+| 9  | **Refrigeration Load**         | Fan, compressor power, duty cycle, energy tracking, peak loads                                  | Refrigerant gas type behavior                 |
+| 10 | **Control Logic (Rule-based)** | On/Off thermostat thresholds, hysteresis logic                                                  | Adaptive logic for subzones                   |
+| 11 | **AI Control Logic**           | RL/ML agent using zone temps, energy, risk for decision-making                                  | Real-time re-training                         |
+| 12 | **Energy Consumption Tracking**| Compressor, fan breakdowns by time window (day/night), total energy used                        | Real electrical losses                        |
+| 13 | **Cold Chain Risk (TTI)**      | Time-Temperature Integral model to quantify spoilage or risk                                    | Ethylene-based deterioration                  |
+| 14 | **Door Open Events**           | Scheduled door open/close profiles, airflow loss, vestibule modeling                            | Door surface shape effects                    |
+| 15 | **Air Curtain Simulation**     | Configurable insulation factor during door open events                                          | CFD of barrier mixing                         |
+| 16 | **Product Loading/Unloading**  | Truck arrival events, shift-based intake/output heat profiles                                   | Product pre-cooling delay                     |
+| 17 | **Chamber Zones**              | Divided spatial zones for temperature and airflow tracking                                      | 3D voxel-level heat modeling                  |
+| 18 | **Weather Profiles**           | Monthly/daily/hourly profiles via JSON, affects wall heat transfer                              | Humidity/latent heat integration              |
+| 19 | **Visualization (Frontend)**   | D3.js charts, 3D airflow + zone heatmap, config dashboards                                      | Fluid dynamics particles                      |
+| 20 | **Custom Configurations**      | Full flexibility in input: items, stacking, air layout, walls, sensors, workers                 | Real-time drag-drop stack planner             |
+| 21 | **Fault Simulation (optional)**| Placeholder for later: cooling failure, sensor loss, delayed loading                            | Currently unimplemented                       |
+| 22 | **Insulation Materials**       | Wall insulation effect, vestibule resistance, crate resistance                                  | Degradation over years                        |
+| 23 | **Thermal Inertia**            | Lag in crate center vs surface, per-product delay configuration                                 | No heat diffusion equation                    |
+| 24 | **Energy Cost Optimization**   | Total consumption for AI vs Rule, zone-by-zone efficiency                                       | Real billing tariffs                          |
+| 25 | **Data Logging & Reporting**   | Hourly logs, run comparisons, PDF/CSV reports with insights                                     | None                                           |
+| 26 | **Testing & Validation**       | Modular test suite per component                                                                | Physical validation vs real warehouse         |
+
+
+---
+
+# 🔧 Realism Score Summary
+
+- 🔵 **Very Close to Real-World (19/26)** — strong approximations or configurable proxies.
+- 🟡 **Close but Simplified (5/26)** — not fully physics-based (e.g., CFD, gas chemistry).
+- 🔴 **Skipped for Now (2/26)** — failure injection, advanced diffusion.
+
+---
+
+# 🧪 Next Steps to Improve Realism
+
+1. CFD-based airflow heat transfer
+2. Real data from working cold storages for validation
+3. Spoilage chemical modeling
+4. Humidity & condensation control (latent heat)
+
+```
+
+```
 ├── config/                            # 🔧 All configurable parameters
 │   ├── example_config.json            # Master configuration file
 │   ├── weather_profiles.json          # Hourly/monthly weather data
