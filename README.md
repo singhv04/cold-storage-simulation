@@ -3,35 +3,31 @@
 
 # 🧊 Cold Storage Simulation – Factor Coverage Breakdown
 
-| #  | Factor                          | Covered Details                                                                                 | Skipped / Simplified                          |
-|----|--------------------------------|--------------------------------------------------------------------------------------------------|------------------------------------------------|
-| 1  | **Airflow Modeling**           | Zone-wise airflow, duct/fan placement, velocity, pressure, stacking interference               | CFD-level turbulence models                   |
-| 2  | **Stacking Layout**            | Stack height, gaps, blocking airflow, layout logic                                              | Crate deformation dynamics                    |
-| 3  | **Product Type**               | Per-product thermal properties (heat capacity, respiration) via config                          | Water content variability, spoilage chemistry |
-| 4  | **Packaging Types**            | Crate, box, sack modeling — thermal insulation and airflow resistance                           | Internal packaging layering                   |
-| 5  | **Multi-Chamber Support**      | Multiple isolated chambers with independent controls and workloads                              | Air leakage across chambers                   |
-| 6  | **Sensor Bias/Delay**          | Lag between surface and core sensor, configurable error margins                                 | Sensor aging/drift over time                  |
-| 7  | **Worker Heat Modeling**       | Shift timing, human presence-induced heat, movement-based zone impact                           | Activity-based metabolic rate variation       |
-| 8  | **External Weather Influence** | Hourly/daylight profile, seasonal variation, wall transfer rate, wall orientation               | Real building shape and solar load            |
-| 9  | **Refrigeration Load**         | Fan, compressor power, duty cycle, energy tracking, peak loads                                  | Refrigerant gas type behavior                 |
-| 10 | **Control Logic (Rule-based)** | On/Off thermostat thresholds, hysteresis logic                                                  | Adaptive logic for subzones                   |
-| 11 | **AI Control Logic**           | RL/ML agent using zone temps, energy, risk for decision-making                                  | Real-time re-training                         |
-| 12 | **Energy Consumption Tracking**| Compressor, fan breakdowns by time window (day/night), total energy used                        | Real electrical losses                        |
-| 13 | **Cold Chain Risk (TTI)**      | Time-Temperature Integral model to quantify spoilage or risk                                    | Ethylene-based deterioration                  |
-| 14 | **Door Open Events**           | Scheduled door open/close profiles, airflow loss, vestibule modeling                            | Door surface shape effects                    |
-| 15 | **Air Curtain Simulation**     | Configurable insulation factor during door open events                                          | CFD of barrier mixing                         |
-| 16 | **Product Loading/Unloading**  | Truck arrival events, shift-based intake/output heat profiles                                   | Product pre-cooling delay                     |
-| 17 | **Chamber Zones**              | Divided spatial zones for temperature and airflow tracking                                      | 3D voxel-level heat modeling                  |
-| 18 | **Weather Profiles**           | Monthly/daily/hourly profiles via JSON, affects wall heat transfer                              | Humidity/latent heat integration              |
-| 19 | **Visualization (Frontend)**   | D3.js charts, 3D airflow + zone heatmap, config dashboards                                      | Fluid dynamics particles                      |
-| 20 | **Custom Configurations**      | Full flexibility in input: items, stacking, air layout, walls, sensors, workers                 | Real-time drag-drop stack planner             |
-| 21 | **Fault Simulation (optional)**| Placeholder for later: cooling failure, sensor loss, delayed loading                            | Currently unimplemented                       |
-| 22 | **Insulation Materials**       | Wall insulation effect, vestibule resistance, crate resistance                                  | Degradation over years                        |
-| 23 | **Thermal Inertia**            | Lag in crate center vs surface, per-product delay configuration                                 | No heat diffusion equation                    |
-| 24 | **Energy Cost Optimization**   | Total consumption for AI vs Rule, zone-by-zone efficiency                                       | Real billing tariffs                          |
-| 25 | **Data Logging & Reporting**   | Hourly logs, run comparisons, PDF/CSV reports with insights                                     | None                                           |
-| 26 | **Testing & Validation**       | Modular test suite per component                                                                | Physical validation vs real warehouse         |
-
+| **Factor**                         | **Covered Details**                                                                                                                                          | **Skipped/Simplified**                                                                                      |
+|------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| **Airflow Simulation**             | Directional zone-level airflow with adjustable fan positions, speeds, and stacking influence. Air curtain effect considered.                                 | No 3D voxel-based CFD; airflow is simplified to zone-level with influence maps.                             |
+| **Stacking & Blocking**            | Product stacking height, crate layout, and airflow interference modeled via airflow-weighting logic.                                                         | Detailed object collision or full 3D layout physics not included.                                           |
+| **Heat Gain – External**           | Based on wall/roof orientation, insulation material, and weather profile (day/night/season).                                                                  | Solar radiation angles not dynamically calculated.                                                          |
+| **Heat Gain – Internal (Workers)** | Worker heat modeled by shifts, presence, metabolic rate, and zone impact.                                                                                     | Movement paths and human distribution inside room not spatially resolved.                                   |
+| **Heat Gain – Door Events**        | Door opening frequency, duration, and insulation via air curtain considered.                                                                                 | Turbulence or pressure exchange not modeled in full physical accuracy.                                      |
+| **Insulation Configs**             | Floor, wall, ceiling, and door insulation R-values are configurable and per zone.                                                                             | Aging/degradation of insulation over time not modeled.                                                      |
+| **Product Properties**             | Each product has thermal mass, specific heat, moisture level, spoilage limits, and storage profile.                                                          | No microbial modeling or enzymatic kinetics (e.g., ethylene effect).                                        |
+| **Packaging Types**                | Crates, sacks, bundles modeled with size, material, and insulation resistance.                                                                                | Complex irregular shapes are abstracted as bounding box containers.                                         |
+| **Product Pre-cooling Delay**      | Surface vs core temp lag is modeled; items cool slower from center with time constants based on packaging and size.                                          | No thermal gradient within object (not voxelized).                                                          |
+| **Compressor/Fan Control**         | Rule-based threshold logic and AI optimization controller (with RL model) available.                                                                          | AI currently simulated as policy lookup, not online training.                                               |
+| **Energy Consumption**             | Compressor/fan/lighting energy tracked by operational time and power draw. Aggregated per hour & per condition.                                               | Startup surge, degradation, and real compressor models simplified to runtime power draw.                    |
+| **Cold Chain Risk (TTI)**          | Time-Temperature Integral calculated per product per zone; spoilage estimations generated.                                                                   | No product-specific spoilage chemistry; generalized TTI logic applied.                                      |
+| **Weather & Time of Day**          | Hourly profiles for temperature (day/night/evening) and seasonal months.                                                                                     | No humidity or wind direction effects modeled yet.                                                          |
+| **Multi-Chamber Coordination**     | Chambers simulated independently or in coordinated way; inter-chamber logic supported for shared load.                                                       | Interconnected ducts or cross-flow leakage not yet simulated.                                               |
+| **Sensor Bias**                    | Configurable temperature lag between crate surface and core sensors; sensor position bias can be simulated.                                                  | No sensor error noise or drift modeling (only delay).                                                       |
+| **AI Controller Optimization**     | RL-based controller attempts to optimize cooling effort for energy saving while meeting thresholds and minimizing spoilage.                                 | Offline trained policy only; no adaptive online RL implemented in real-time loop.                           |
+| **Worker Shifts & Presence**       | Models different operational loads based on staff schedule (e.g., loading/unloading in morning/evening).                                                    | Does not track specific human paths or actions — only zone-wise presence.                                   |
+| **Air Curtains / Vestibules**      | Door models include presence or absence of air curtain; impact on airflow and heat gain is modeled using insulation factor.                                 | No dynamic airflow turbulence simulation; simplified door resistance.                                       |
+| **Pre/Post Run Reporting**         | Detailed logging of energy use, spoilage, TTI, zone temps, and controller actions; reports in CSV, JSON, and visual plots.                                  | Reports do not include confidence bounds or predictive accuracy ranges.                                     |
+| **Interactive Visualization**      | Heatmaps, airflow direction, temperature curves, zone-wise risk using D3.js and matplotlib.                                                                  | No 3D voxel rendering or real physics engine rendering (e.g., Unity/Cesium).                                |
+| **Frontend Config Editor**         | Users can configure all parameters: chamber setup, products, airflow, weather profile, insulation, controllers, etc.                                         | No real-time editing during simulation run (for now); editing is pre-run only.                              |
+| **Simulation Runtime Controls**    | Run simulations for N hours, simulate fast-forward or step-by-step, compare multiple strategies.                                                             | No distributed multi-core parallel runs yet.                                                                |
+| **Scenario Comparison Dashboard**  | Rule vs AI control compared side-by-side by energy usage, spoilage, and performance metrics with visual plots.                                               | No predictive extrapolation or simulation forecasting yet.                                                  |
 
 ---
 
@@ -55,134 +51,123 @@
 # 🧪 Setup
 
 ```
-├── config/                            # 🔧 All configurable parameters
-│   ├── example_config.json            # Master configuration file
-│   ├── weather_profiles.json          # Hourly/monthly weather data
-│   ├── products_catalog.json          # Vegetable/fruit properties
-│   ├── packaging_catalog.json         # Crates, sacks, boxes materials
-│   ├── stacking_profiles.json         # Stack layout, height, airflow resistance
-│   ├── airflow_profiles.json          # Fan placement, ducting, circulation zones
-│   ├── event_profiles.json            # Loading/unloading/truck schedules
-│   ├── worker_shifts.json             # Heat and events induced by workers
-│   ├── sensor_profiles.json           # Bias, lag, accuracy per sensor type
-│   └── insulation_features.json       # Air curtains, vestibule settings
-
-├── simulation_engine/                 # 🧠 Physics-based simulation engine
-│   ├── simulation_runner.py           # Main orchestrator
-│   ├── chamber.py                     # Models the cold chamber as thermal system
-│   ├── zone.py                        # Partitioned zones inside chamber
-│   ├── airflow_model.py               # Simulates air velocity, pressure
-│   ├── heat_gain_model.py             # Heat ingress from walls, doors, humans
-│   ├── refrigeration_system.py        # Compressor, fan energy + cooling logic
-│   ├── stacking_model.py              # Models airflow resistance due to layout
-│   ├── product.py                     # Perishable item thermal profiles
-│   ├── packaging.py                   # Impact of crates, sacks, wrap types
-│   ├── weather_engine.py              # External weather influence model
-│   ├── sensor_model.py                # Lag, inaccuracy modeling
-│   ├── event_scheduler.py             # Handles doors open, deliveries, workload
-│   ├── delivery_scheduler.py          # Manages truck schedules
-│   ├── energy_tracker.py              # Logs compressor/fan energy use
-│   ├── worker_shift_model.py          # Adds heat/events from worker activity
-│   ├── vestibule_model.py             # Simulates vestibule / air curtain effect
-│   ├── fault_model.py                 # Optional failure simulation (future)
-│   └── chamber_manager.py             # For multiple chambers coordination
-
-├── control_logic/                     # 🤖 Rule-based vs AI controllers
-│   ├── rule_based_controller.py       # Threshold-based traditional logic
-│   ├── ai_controller.py               # RL-based dynamic policy controller
-│   ├── control_utils.py               # Shared methods and state interface
-│   └── multi_chamber_orchestrator.py # Controls multi-chamber interactions
-
-├── reporting/                         # 📊 Risk, performance, and summary reports
-│   ├── report_generator.py            # Generates PDF/HTML reports
-│   ├── comparison_plotter.py          # Plots AI vs Rule metrics
-│   └── risk_evaluator.py              # TTI, risk of spoilage, etc.
-
-├── utils/                             # 🧰 Utilities
-│   ├── config_loader.py               # Loads and validates config
-│   ├── unit_converter.py              # Handles Celsius↔Fahrenheit, kWh↔Joules
-│   ├── logger.py                      # Logging formatter
-│   └── validation.py                  # Schema checks for config files
-
-├── data/                              # 📁 Raw and synthetic input data
-│   ├── weather_data/                  # Real weather CSV files
-│   └── product_samples/               # Example product thermal logs
-
-├── logs/                              # 📁 Auto-generated logs
-│   ├── temp_logs/                     # Temperature history per zone
-│   ├── energy_logs/                   # Compressor/fan kWh use
-│   └── events_log/                    # Door open, staff presence, etc.
-
-├── simulation_runs/                   # 📁 Saved outputs from previous runs
-│   ├── run_YYYYMMDD_HHMM/
-│   │   ├── config_used.json
-│   │   ├── temp_log.csv
-│   │   ├── energy_log.csv
-│   │   ├── tti_risk.json
-│   │   └── final_report.pdf
-
-├── api/                               # 🌐 Backend API (FastAPI or Flask)
-│   ├── main.py                        # Entrypoint for simulation API
+cold_storage_simulation/
+├── api/                               # Flask/FastAPI backend to control simulation via UI or APIs
+│   ├── __init__.py
 │   ├── endpoints/
-│   │   ├── simulation.py              # Start/stop simulation
-│   │   ├── config.py                  # Upload/download configs
-│   │   └── metrics.py                 # Serve real-time stats to frontend
-│   ├── scheduler.py                   # Runs queued simulations
-│   └── websocket.py                   # Push updates (Live temp, energy, etc.)
+│   │   ├── simulation.py              # Run simulation, get results
+│   │   ├── config_loader.py           # Update/load configs via API
+│   │   └── control_toggle.py          # Switch between rule-based and AI
+│   └── schemas/
+│       ├── product_schema.py
+│       └── simulation_request.py
 
-├── frontend/                          # 🖥️ Web app with D3 visualizations
-│   ├── public/
-│   │   └── index.html
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── pages/
-│   │   │   ├── Configurator.jsx       # Upload/customize simulation config
-│   │   │   └── Compare.jsx            # Compare AI vs Rule-based results
-│   │   ├── components/
-│   │   │   ├── Dashboard.jsx          # Real-time metrics
-│   │   │   ├── Charts.jsx             # 📊 D3.js line/bar/heatmap charts
-│   │   │   ├── ZoneHeatmap3D.jsx      # 3D airflow/temp visualizer
-│   │   │   ├── ConfigEditor.jsx       # UI for creating/editing configs
-│   │   │   └── EnergyBreakdownCard.jsx# Day/Night/Afternoon energy use
-│   │   ├── utils/api.js               # Axios/API bridge to backend
-│   │   └── styles/                    # Tailwind/custom styles
-│   ├── vite.config.js
-│   └── tailwind.config.js
+├── configs/                           # Modular config files for each factor and environment
+│   ├── products/                      # Product-specific settings (cp, moisture, etc.)
+│   │   ├── mango.json
+│   │   └── potato.json
+│   ├── packaging/                     # Crate/sack/bag metadata (thermal resistance, size)
+│   │   ├── plastic_crate.json
+│   │   ├── jute_sack.json
+│   │   └── tied_bundle.json
+│   ├── chambers/                      # Chamber layout & zone settings
+│   │   ├── single_chamber.json
+│   │   └── multi_chamber.json
+│   ├── insulation.json                # Walls, doors, roof, floor insulation factors
+│   ├── weather_profile.json           # Time-of-day and seasonal temperature
+│   ├── airflow.json                   # Fan positions, speeds, zone airflow configs
+│   ├── worker_shifts.json             # Worker presence heat model
+│   ├── door_schedule.json             # When doors open/close + air curtain data
+│   ├── controller_settings.json       # Rule and AI controller configs
+│   └── simulation_settings.json       # Duration, time_step, visualization flags, etc.
 
-├── notebooks/                         # 📒 Analysis & prototyping
-│   ├── airflow_vs_stacking.ipynb
-│   └── ai_vs_rule_summary.ipynb
+├── core/                              # Core simulation models (physical & decision logic)
+│   ├── thermal/
+│   │   ├── temperature_solver.py      # Computes zone/product temperature updates
+│   │   ├── product_cooling.py         # Handles pre-cooling delays (surface vs core temp)
+│   │   └── heat_transfer_utils.py     # Conduction/convection computations
+│   ├── airflow/
+│   │   ├── airflow_simulator.py       # Weighted airflow path solver across zones
+│   │   └── fan_placement_optimizer.py # Advanced airflow balancing (optional)
+│   ├── control/
+│   │   ├── rule_based.py              # Traditional threshold-based control
+│   │   ├── ai_controller.py           # RL or ML model-based intelligent agent
+│   │   └── controller_interface.py    # Wrapper interface for switching
+│   ├── risk/
+│   │   ├── tti_calculator.py          # Time-temperature-integral logic
+│   │   └── product_spoilage_estimator.py
+│   ├── energy/
+│   │   ├── energy_tracker.py          # Track compressor/fan energy by component
+│   │   └── energy_optimizer.py        # Reduce power with AI trade-offs
+│   └── heat_gain/
+│       ├── external_weather_gain.py
+│       ├── door_opening_loss.py
+│       ├── worker_shift_gain.py
+│       └── air_curtain_effect.py
 
-├── tests/                             # 🧪 All unit and integration tests
-│   ├── simulation_engine/
-│   │   ├── test_chamber.py
-│   │   ├── test_airflow_model.py
-│   │   ├── test_sensor_model.py
-│   │   └── test_energy_tracker.py
-│   ├── control_logic/
-│   │   ├── test_rule_based_controller.py
-│   │   └── test_ai_controller.py
-│   ├── utils/
-│   │   ├── test_config_loader.py
-│   │   └── test_validation.py
-│   ├── api/
-│   │   └── test_simulation_routes.py
-│   ├── reporting/
-│   │   ├── test_report_generator.py
-│   │   └── test_risk_evaluator.py
-│   ├── fixtures/
-│   │   ├── sample_config.json
-│   │   └── mock_weather.csv
-│   └── conftest.py
+├── engine/                            # Simulation runner and orchestrator
+│   ├── initializer.py                 # Load settings, validate configs, initialize state
+│   ├── simulation_runner.py           # Core engine that loops over timesteps
+│   ├── logger.py                      # Logs all results and summaries
+│   └── engine_config.py               # Abstract engine setup to allow plug-and-play modules
 
-├── .github/
-│   └── workflows/
-│       └── ci.yml                     # CI pipeline: pytest + lint + build
+├── frontend/                          # Full UI (Flask+HTML+D3 or React)
+│   ├── templates/
+│   │   └── index.html                 # Main dashboard
+│   ├── static/
+│   │   ├── js/
+│   │   │   ├── d3_visualizer.js       # Heatmaps, airflow, live plots
+│   │   │   └── config_form.js         # Interactive config selector
+│   │   └── css/
+│   │       └── style.css
+│   └── app.py                         # Flask app entry point for UI
 
-├── main.py                            # 🧵 CLI interface to run simulations
-├── README.md                          # 📘 Project overview, setup, usage
-├── requirements.txt                   # 🐍 Python dependencies
-├── package.json                       # 📦 Frontend dependencies
-└── .env                               # 🔐 Secrets (weather API keys, etc.)
+├── logs/                              # Raw simulation logs and debugging
+│   ├── temp_logs.csv
+│   ├── energy_logs.csv
+│   ├── risk_logs.csv
+│   └── controller_actions.csv
+
+├── reports/                           # Final result reports
+│   ├── energy_report.pdf              # Full energy and savings breakdown
+│   ├── spoilage_report.pdf            # Cold chain risk summary
+│   └── summary.json
+
+├── simulation_runs/                   # Folder to store run outputs
+│   ├── run_2025_07_26_10AM/
+│   │   ├── config_snapshot.json
+│   │   ├── logs/
+│   │   ├── plots/
+│   │   └── results.json
+│   └── ...
+
+├── tests/                             # Unit and integration tests
+│   ├── test_airflow_simulator.py
+│   ├── test_thermal_model.py
+│   ├── test_ai_controller.py
+│   ├── test_config_loading.py
+│   └── test_engine_loop.py
+
+├── utils/                             # Utility functions & helpers
+│   ├── json_loader.py
+│   ├── time_utils.py
+│   ├── unit_converter.py
+│   └── logger.py
+
+├── notebooks/                         # Jupyter notebooks for experiments and debugging
+│   ├── ai_controller_training.ipynb
+│   ├── airflow_validation.ipynb
+│   └── pre_cooling_simulation.ipynb
+
+├── visualization/                     # Static & interactive plots, exports
+│   ├── energy_plot.py
+│   ├── temperature_map.py
+│   ├── spoilage_chart.py
+│   └── generate_html_dashboard.py
+
+├── requirements.txt                   # All required dependencies
+├── run_simulation.py                  # CLI entry point to launch simulation
+└── README.md                          # Full overview and how-to-run guide
+
 ```
 
