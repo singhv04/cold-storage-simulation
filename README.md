@@ -1,5 +1,4 @@
-# 📁 cold_storage_simulation/
-
+# cold-storage-simulation
 
 ## 📊 Cold Storage Simulation – Factor Coverage Breakdown
 
@@ -30,7 +29,9 @@
 
 -----
 
-# 🧪 Setup
+## 🧪 Setup
+
+### 📁 cold_storage_simulation/
 
 ```
 cold_storage_simulation/
