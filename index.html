@@ -337,13 +337,6 @@ canvas.chart{ width:100%; height:110px; display:block; }
 #tooltip.show{ opacity:1; transform:translateY(0); }
 #tooltip.wide{ max-width:340px; }
 #tooltip b{ display:block; margin-bottom:2px; color:var(--frost); font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; }
-#tooltip table.ratecard{ width:100%; border-collapse:collapse; margin:6px 0; font-size:11px; }
-#tooltip table.ratecard th{
-  text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:0.03em;
-  color:var(--bg); opacity:0.55; padding:2px 6px 3px 0; border-bottom:1px solid rgba(255,255,255,0.2);
-}
-#tooltip table.ratecard td{ padding:3px 6px 3px 0; border-bottom:1px solid rgba(255,255,255,0.1); white-space:nowrap; }
-#tooltip table.ratecard tr:last-child td{ border-bottom:none; }
 
 /* ---------- Digital-twin badge ---------- */
 .dt-badge{
@@ -455,6 +448,12 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
 .filterGroup .fg-links a{ color:var(--accent); cursor:pointer; text-decoration:none; }
 .filterGroup .fg-links a:hover{ text-decoration:underline; }
 .filterList{ max-height:140px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; }
+.filterSelect{
+  width:100%; background:var(--panel); color:var(--ink); border:1px solid var(--line);
+  border-radius:6px; padding:4px; font-size:12.5px;
+}
+.filterSelect option{ padding:4px 6px; border-radius:4px; }
+.filterSelect option:checked{ background:var(--accent); color:#04262c; }
 .filterList label{ display:flex; align-items:center; gap:7px; font-size:12.5px; cursor:pointer; }
 .filterList input[type=checkbox]{ accent-color:var(--accent); cursor:pointer; }
 .billSummary{
@@ -868,7 +867,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
     <div class="filterGroups">
       <div class="filterGroup">
         <div class="fg-head"><span class="t">Day</span><span class="fg-links"><a id="billDayAll">all</a> · <a id="billDayNone">none</a></span></div>
-        <div class="filterList" id="billDayList"></div>
+        <select class="filterSelect" id="billDaySel" multiple size="6"></select>
       </div>
       <div class="filterGroup">
         <div class="fg-head"><span class="t">Tariff period</span><span class="fg-links"><a id="billPeriodAll">all</a> · <a id="billPeriodNone">none</a></span></div>
@@ -2575,20 +2574,29 @@ function renderTwin(){
 // Inline-styled on purpose (not relying on the .ratecard stylesheet class) so this
 // renders correctly regardless of any CSS cascade/cache timing — the tooltip's own
 // td/th styling shouldn't matter for whether the numbers show up at all.
+// Deliberately built from plain <div> rows, not a <table> — sidesteps any
+// table/thead/tbody-specific rendering quirk in whatever's hosting this page.
+// Every declaration is inline so nothing here depends on an external
+// stylesheet having loaded/cached correctly either.
 function tariffCardHTML(){
-  const cellStyle = "padding:3px 8px 3px 0;border-bottom:1px solid rgba(255,255,255,0.15);white-space:nowrap;";
-  const headStyle = cellStyle+"opacity:0.6;font-size:9.5px;text-transform:uppercase;";
+  const rowStyle = "display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.15);";
   const rows = TARIFF_BANDS.map(b=>{
     const rate = (BASE_TARIFF*b.mult).toFixed(2);
-    const pct = b.mult===1 ? "base rate" : `${b.mult>1?"+":""}${((b.mult-1)*100).toFixed(0)}%`;
-    return `<tr><td style="${cellStyle}">${b.name}</td><td style="${cellStyle}">${b.hours}</td><td style="${cellStyle}" class="tnum">₹${rate}</td><td style="${cellStyle}">${pct}</td></tr>`;
+    const pct = b.mult===1 ? "base" : `${b.mult>1?"+":""}${((b.mult-1)*100).toFixed(0)}%`;
+    return `<div style="${rowStyle}">`
+      + `<span style="min-width:56px">${b.name}</span>`
+      + `<span style="flex:1;text-align:left;opacity:0.85;white-space:nowrap">${b.hours}</span>`
+      + `<span style="white-space:nowrap;font-variant-numeric:tabular-nums">₹${rate}</span>`
+      + `<span style="min-width:38px;text-align:right;opacity:0.85">${pct}</span>`
+      + `</div>`;
   }).join("");
-  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF.toFixed(2)}/kWh
-  <table style="width:100%;border-collapse:collapse;margin:6px 0;font-size:11px;">
-    <thead><tr><th style="${headStyle}">Period</th><th style="${headStyle}">Hours</th><th style="${headStyle}">Rate</th><th style="${headStyle}">vs base</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-  Solar-hours and off-peak get a discount; the evening peak gets a surcharge — the same shape most Indian DISCOM commercial/industrial ToU orders use.`;
+  const headStyle = "display:flex;justify-content:space-between;gap:10px;padding-bottom:3px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.03em;opacity:0.6;border-bottom:1px solid rgba(255,255,255,0.25);";
+  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF.toFixed(2)}/kWh`
+    + `<div style="margin:6px 0;font-size:11px;">`
+    + `<div style="${headStyle}"><span style="min-width:56px">Period</span><span style="flex:1">Hours</span><span>Rate</span><span style="min-width:38px;text-align:right">vs base</span></div>`
+    + rows
+    + `</div>`
+    + `Solar-hours and off-peak get a discount; the evening peak gets a surcharge — the same shape most Indian DISCOM commercial/industrial ToU orders use.`;
 }
 
 const TIPS = {
@@ -2658,7 +2666,7 @@ const TIPS = {
     const html = TIPS[key];
     if(!html) return;
     tipEl.innerHTML = html;
-    tipEl.classList.toggle("wide", html.includes("<table"));
+    tipEl.classList.toggle("wide", html.includes("ToU rate card"));
     current = target;
     position(target);
     tipEl.classList.add("show");
@@ -2849,13 +2857,13 @@ function renderGlossary(filter){
    ============================================================ */
 
 function populateBillFilters(){
-  const dayList = document.getElementById("billDayList");
-  if(dayList.children.length !== state.dayCount){
-    const checked = new Set([...dayList.querySelectorAll("input:checked")].map(el=>el.value));
-    dayList.innerHTML = "";
+  const daySel = document.getElementById("billDaySel");
+  if(daySel.options.length !== state.dayCount){
+    const wasSelected = new Set([...daySel.selectedOptions].map(o=>o.value));
+    daySel.innerHTML = "";
     for(let d=1; d<=state.dayCount; d++){
-      const wasChecked = checked.size===0 || checked.has(String(d));
-      dayList.insertAdjacentHTML("beforeend", `<label><input type="checkbox" value="${d}" ${wasChecked?"checked":""}> Day ${d}</label>`);
+      const isSelected = wasSelected.size===0 || wasSelected.has(String(d));
+      daySel.insertAdjacentHTML("beforeend", `<option value="${d}" ${isSelected?"selected":""}>Day ${d}</option>`);
     }
   }
   const periodList = document.getElementById("billPeriodList");
@@ -2874,7 +2882,7 @@ function getCheckedValues(containerId){
 
 function renderBillBreakdown(){
   populateBillFilters();
-  const days = getCheckedValues("billDayList");
+  const days = new Set([...document.getElementById("billDaySel").selectedOptions].map(o=>o.value));
   const periods = getCheckedValues("billPeriodList");
   const zones = getCheckedValues("billZoneList");
 
@@ -2921,14 +2929,20 @@ function renderBillBreakdown(){
   document.getElementById("billModalClose").addEventListener("click", ()=> overlay.classList.remove("open"));
   overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
   document.addEventListener("keydown", e=>{ if(e.key==="Escape") overlay.classList.remove("open"); });
-  overlay.addEventListener("change", e=>{ if(e.target.matches('input[type=checkbox]')) renderBillBreakdown(); });
+  overlay.addEventListener("change", e=>{ if(e.target.matches('input[type=checkbox]') || e.target.id==="billDaySel") renderBillBreakdown(); });
 
   function bulkSet(listId, checked){
     document.querySelectorAll(`#${listId} input`).forEach(el=> el.checked=checked);
     renderBillBreakdown();
   }
-  document.getElementById("billDayAll").addEventListener("click", ()=>bulkSet("billDayList", true));
-  document.getElementById("billDayNone").addEventListener("click", ()=>bulkSet("billDayList", false));
+  document.getElementById("billDayAll").addEventListener("click", ()=>{
+    [...document.getElementById("billDaySel").options].forEach(o=>o.selected=true);
+    renderBillBreakdown();
+  });
+  document.getElementById("billDayNone").addEventListener("click", ()=>{
+    [...document.getElementById("billDaySel").options].forEach(o=>o.selected=false);
+    renderBillBreakdown();
+  });
   document.getElementById("billPeriodAll").addEventListener("click", ()=>bulkSet("billPeriodList", true));
   document.getElementById("billPeriodNone").addEventListener("click", ()=>bulkSet("billPeriodList", false));
   document.getElementById("billZoneAll").addEventListener("click", ()=>bulkSet("billZoneList", true));
