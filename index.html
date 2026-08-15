@@ -1479,14 +1479,19 @@ function stepZone(i, dt){
     state.frost[i] = Math.max(0, state.frost[i] - 0.02*dt);
   }
 
-  // --- spoilage: Arrhenius/Q10 kinetics — rate scales by qten per 5C step above target.
+  // --- spoilage: Arrhenius/Q10 kinetics. "Q10" has a fixed, literal meaning — it's
+  // the multiplier a reaction rate gets for every 10C rise, by definition — so the
+  // exponent MUST be over/10, not over/5. (An earlier version of this code used /5,
+  // which silently doubled the effective temperature-sensitivity: a tomato with
+  // qten=2.8 was decaying like a real Q10≈7.8 product. Fixed to match the literal
+  // definition the product table's qten values were actually chosen against.)
   // refLife is the shelf life AT target temperature, so the index climbs even under
   // perfect control — that's real: refrigeration slows spoilage, it doesn't stop it.
   // batchAgeMin tracks how long the CURRENT batch has been sitting so the number stays
   // interpretable once stock turns over (see maybeSpawnTruck / maybeRotateStock).
   state.batchAgeMin[i] += dt;
   const over = Math.max(0, state.zoneTemp[i]-target);
-  const rateMultiplier = Math.pow(cfg.product.qten, over/5);
+  const rateMultiplier = Math.pow(cfg.product.qten, over/10);
   const decayPerMin = (100/(cfg.product.refLife*60)) * rateMultiplier;
   state.spoilIndex[i] = Math.min(100, state.spoilIndex[i] + decayPerMin*dt);
 }
@@ -2610,7 +2615,7 @@ const GLOSSARY = [
   { term:"UA (envelope conductance)", simple:"How fast heat leaks through a chamber's insulated walls. Bigger UA = leakier walls.", example:"Used inside the 'wall/envelope' share of the heat-load breakdown chart.", eq:"heat leaking in (Watts) = UA × (outside temp − inside temp)", diff:"Real UA varies by wall condition, door seals, and age — here it's one fixed number per chamber based on assumed insulation." },
   { term:"Thermal mass / capacitance", simple:"How much heat something can 'soak up' before its temperature actually changes. A tank of water heats up slower than an empty tin can.", example:"Why product core temperature changes slowly (large mass) while air temperature swings fast (small mass).", eq:"temperature change = heat added ÷ thermal mass", diff:"Real thermal mass also depends on packaging and how densely stock is packed — simplified here to just item mass × its cp." },
   { term:"τ (tau, time constant)", simple:"Roughly how long a stored item takes to catch up to the surrounding air temperature — a slow item has a big τ.", example:"Frozen meat τ=55h (very slow); tomato τ=9h (much faster).", eq:"after 1×τ, ~63% of the gap has closed; after 3×τ, ~95% has closed", diff:"Real τ depends on how the item is packed (loose vs. boxed vs. palletized), not just the item itself." },
-  { term:"Q10 / Arrhenius spoilage kinetics", simple:"A rule of thumb: for every roughly 5-10°C a food gets warmer than its ideal storage temp, it spoils noticeably faster — often twice as fast.", example:"Tomato has a high Q10 (2.8) — it punishes warm excursions hard; potato's Q10 (1.9) is more forgiving.", eq:"spoilage speed multiplier = Q10 ^ (degrees over target ÷ 5)", diff:"Real spoilage is caused by specific microbes/enzymes with their own curves — this uses one general-purpose formula for every item." },
+  { term:"Q10 / Arrhenius spoilage kinetics", simple:"A rule of thumb: for every 10°C a food gets warmer than its ideal storage temp, it spoils noticeably faster — often twice as fast. 'Q10' literally means 'the multiplier per 10 degrees,' which is why the equation divides by 10, not any other number.", example:"Tomato has a high Q10 (2.8) — a 10°C excursion makes it spoil 2.8x faster; potato's Q10 (1.9) is more forgiving.", eq:"spoilage speed multiplier = Q10 ^ (degrees over target ÷ 10)", diff:"Real spoilage is caused by specific microbes/enzymes with their own curves — this uses one general-purpose formula for every item." },
   { term:"TTI / Spoilage index", simple:"A running score, 0 to 100, of how much of an item's shelf life has been 'used up' by however warm it's been.", example:"'Shelf-life used' column — resets partially whenever fresh stock arrives or old stock ships out.", eq:"index += (100 ÷ shelf-life minutes) × Q10 multiplier, each minute", diff:"Real cold chains also track physical damage (bruising, moisture loss) that a pure temperature-history score can't see." },
   { term:"PI controller", simple:"A smart dimmer: it looks at how far off temperature is right now (Proportional) AND how long it's been off (Integral) to decide how hard to run the compressor.", example:"Variable-speed (VFD) controller mode.", eq:"compressor output = (error × Kp) + (running total of past error × Ki)", diff:"Real industrial PI/PID loops are tuned per-site by an engineer; this uses one fixed generic tuning." },
   { term:"VFD (variable-frequency drive)", simple:"Compressor hardware that can run at any speed, not just full-on or full-off — like a car's accelerator instead of a light switch.", example:"'Variable-speed (VFD)' controller option — capacity fraction shown per zone.", eq:"electricity used ≈ proportional to cooling delivered", diff:"Real VFDs have their own efficiency curve (not perfectly linear) and a minimum speed they can't go below." },
