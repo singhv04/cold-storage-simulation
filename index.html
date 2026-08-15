@@ -501,6 +501,8 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
     <div class="hstat" data-tip="head:tariff"><div class="l">Grid Tariff</div><div class="v tnum" id="stTariff">—</div></div>
     <div class="hstat" data-tip="head:energy"><div class="l">Energy Today</div><div class="v tnum" id="stEnergy">—</div></div>
     <div class="hstat" data-tip="head:spoil"><div class="l">Spoilage Risk</div><div class="v tnum" id="stSpoil">—</div></div>
+    <div class="hstat" data-tip="head:energyTotal"><div class="l">Total Energy</div><div class="v tnum" id="stEnergyTotal">—</div></div>
+    <div class="hstat" data-tip="head:billTotal"><div class="l">Total Bill</div><div class="v tnum" id="stBillTotal">—</div></div>
   </div>
 </header>
 
@@ -980,6 +982,8 @@ function freshState(){
     },
     energyKWhToday: 0,
     costToday: 0,
+    energyKWhTotal: 0,   // whole-run total, never resets (unlike the daily figures above)
+    costTotal: 0,
     energyHistory: [],       // {t, temp[], power, spoil}
     spoilIndex: [0,0,0],     // 0-100, shelf-life consumed by the CURRENT batch in each zone
     batchAgeMin: [0,0,0],    // minutes since the current batch's last stock turnover
@@ -1586,8 +1590,11 @@ function tick(dtMin){
 
   const totalPowerKW = lastZonePowerKW.reduce((a,b)=>a+b,0);
   const kwh = totalPowerKW*(dtMin/60);
+  const kwhCost = kwh*tariffAt(Math.floor((state.tMin/60)%24));
   state.energyKWhToday += kwh;
-  state.costToday += kwh*tariffAt(Math.floor((state.tMin/60)%24));
+  state.costToday += kwhCost;
+  state.energyKWhTotal += kwh;
+  state.costTotal += kwhCost;
 
   state.energyHistory.push({
     t: state.tMin,
@@ -2261,6 +2268,8 @@ function renderStats(){
   tEl.textContent = `₹${tariff.toFixed(1)}/kWh`;
   tEl.className = "v tnum " + (tariff>8.5?"bad":tariff>6?"warn":"good");
   document.getElementById("stEnergy").textContent = `${state.energyKWhToday.toFixed(1)} kWh · ₹${state.costToday.toFixed(0)}`;
+  document.getElementById("stEnergyTotal").textContent = `${state.energyKWhTotal.toFixed(0)} kWh`;
+  document.getElementById("stBillTotal").textContent = `₹${state.costTotal.toFixed(0)}`;
   const maxSpoil = Math.max(...state.spoilIndex);
   const sEl = document.getElementById("stSpoil");
   sEl.textContent = `${maxSpoil.toFixed(0)} / 100`;
@@ -2437,6 +2446,8 @@ const TIPS = {
   "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
   "head:tariff":  "<b>Grid tariff</b>India-style time-of-use rate (₹/kWh). Hand-authored, not pulled from a real utility schedule.",
   "head:energy":  "<b>Energy today</b>Sum of every zone's compressor draw (kW) × time, at today's tariff. Resets at midnight sim-time.",
+  "head:energyTotal": "<b>Total energy</b>Cumulative electricity drawn by all 3 compressor units since the simulation started — never resets, unlike 'Energy Today'.",
+  "head:billTotal": "<b>Total bill</b>Cumulative electricity cost since the simulation started, at whatever time-of-use tariff was in effect each minute — never resets.",
   "head:spoil":   "<b>Spoilage risk</b>Highest zone's shelf-life-consumed index for its CURRENT batch, 0-100, via Arrhenius/Q10 kinetics. It climbs even at perfect temperature — refrigeration slows spoilage, it doesn't stop it — and resets on stock turnover (truck delivery / scheduled rotation), so a stagnant batch left unrotated for its full shelf life will genuinely reach 100.",
   "door":         "<b>Dock door</b>Zone A only. Opens on truck arrival; while open, warm ambient air infiltrates and the air curtain only partially blocks it.",
   "legend:blue":  "Zone core temperature at or below the product's target setpoint.",
@@ -2720,6 +2731,8 @@ window.ColdStorageTwin = {
       totalPowerKW: currentPowerKW(),
       energyTodayKWh: state.energyKWhToday,
       costTodayINR: state.costToday,
+      energyTotalKWh: state.energyKWhTotal,
+      costTotalINR: state.costTotal,
       tariffPerKWh: tariffAt(Math.floor((state.tMin/60)%24)),
       controllerMode: cfg.mode,
       product: cfg.product.name,
