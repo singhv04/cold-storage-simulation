@@ -333,7 +333,15 @@ canvas.chart{ width:100%; height:110px; display:block; }
   box-shadow:0 8px 24px rgba(0,0,0,0.25);
 }
 #tooltip.show{ opacity:1; transform:translateY(0); }
+#tooltip.wide{ max-width:340px; }
 #tooltip b{ display:block; margin-bottom:2px; color:var(--frost); font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; }
+#tooltip table.ratecard{ width:100%; border-collapse:collapse; margin:6px 0; font-size:11px; }
+#tooltip table.ratecard th{
+  text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:0.03em;
+  color:var(--bg); opacity:0.55; padding:2px 6px 3px 0; border-bottom:1px solid rgba(255,255,255,0.2);
+}
+#tooltip table.ratecard td{ padding:3px 6px 3px 0; border-bottom:1px solid rgba(255,255,255,0.1); white-space:nowrap; }
+#tooltip table.ratecard tr:last-child td{ border-bottom:none; }
 
 /* ---------- Digital-twin badge ---------- */
 .dt-badge{
@@ -856,13 +864,25 @@ const SEASONS = {
   winter:  { base:16, swing:5,  rhBase:0.35, rhSwing:0.08 },
 };
 
-// India-style time-of-use tariff (₹/kWh) — swap for a real utility schedule
-function tariffAt(hour){
-  if(hour>=18 && hour<22) return 9.5;   // peak
-  if(hour>=6 && hour<9)   return 7.8;   // morning ramp
-  if(hour>=0 && hour<6)   return 4.2;   // off-peak
-  return 6.5;                            // normal
+// India ToU structure, as actually published by most state DISCOMs' commercial/
+// industrial time-of-day tariff orders: a solar-hours rebate across the ~8 midday
+// hours when grid solar generation is highest, a deeper off-peak discount overnight
+// when demand is lowest, and a peak surcharge across the evening demand spike —
+// with whatever's left over billed at the plain base rate.
+const BASE_TARIFF = 7.5; // Rs/kWh, a representative commercial/industrial LT/HT rate
+const TARIFF_BANDS = [
+  { key:"offpeak", name:"Off-Peak",  hours:"10pm-6am", mult:0.80, note:"up to 20% below base — low grid demand overnight" },
+  { key:"normal",  name:"Normal",    hours:"6am-9am, 5pm-6pm", mult:1.00, note:"plain base rate" },
+  { key:"solar",   name:"Solar",     hours:"9am-5pm",  mult:0.85, note:"10-20% below base — cheap midday solar generation" },
+  { key:"peak",    name:"Peak",      hours:"6pm-10pm", mult:1.15, note:"10-20% above base — evening demand spike" },
+];
+function tariffPeriodAt(hour){
+  if(hour>=22 || hour<6) return TARIFF_BANDS[0];  // 10pm-6am
+  if(hour>=9 && hour<17) return TARIFF_BANDS[2];  // 9am-5pm
+  if(hour>=18 && hour<22) return TARIFF_BANDS[3]; // 6pm-10pm
+  return TARIFF_BANDS[1];                          // 6-9am, 5-6pm
 }
+function tariffAt(hour){ return BASE_TARIFF*tariffPeriodAt(hour).mult; }
 
 const ZONES = ["A - Receiving","B - Bulk racks","C - Deep freeze"];
 const N_ZONES = ZONES.length;
@@ -1787,11 +1807,14 @@ function runAdvisories(){
     }
     const fc = state.forecast.find(f=>f.t - state.tMin > 55 && f.t - state.tMin < 65);
     if(fc && fc.temp[i]-target > cfg.product.band*1.8){
-      advisories.push({zone:i, level:"warn", text:`${ZONES[i]}: forecast crosses excursion threshold within ~1h at current duty — consider pre-cooling now while tariff is ${tariffAt(Math.floor((state.tMin/60)%24))<6.5?"low":"not yet peak"}.`});
+      const nowPeriod = tariffPeriodAt((state.tMin/60)%24);
+      advisories.push({zone:i, level:"warn", text:`${ZONES[i]}: forecast crosses excursion threshold within ~1h at current duty — consider pre-cooling now while tariff is ${nowPeriod.key==="peak"?"already at peak":`still ${nowPeriod.name}`}.`});
     }
     const hourNow = Math.floor((state.tMin/60)%24);
-    if(tariffAt(hourNow)<5 && tariffAt((hourNow+2)%24)>8 && state.zoneTemp[i]-target < -0.2*cfg.product.band){
-      advisories.push({zone:i, level:"ok", text:`${ZONES[i]}: currently below setpoint during off-peak tariff — good time to let thermal mass coast through the coming peak window instead of cycling then.`});
+    const curPeriod = tariffPeriodAt(hourNow);
+    const aheadPeriod = tariffPeriodAt((hourNow+2)%24);
+    if(curPeriod.key!=="peak" && aheadPeriod.key==="peak" && state.zoneTemp[i]-target < -0.2*cfg.product.band){
+      advisories.push({zone:i, level:"ok", text:`${ZONES[i]}: currently below setpoint during ${curPeriod.name} tariff (₹${(BASE_TARIFF*curPeriod.mult).toFixed(2)}/kWh) with Peak tariff starting within ~2h — good time to let thermal mass coast through the coming peak window instead of cycling then.`});
     }
   }
   state.advisories = advisories.slice(0,6);
@@ -2266,7 +2289,7 @@ function renderStats(){
   const tariff = tariffAt(Math.floor(hour));
   const tEl = document.getElementById("stTariff");
   tEl.textContent = `₹${tariff.toFixed(1)}/kWh`;
-  tEl.className = "v tnum " + (tariff>8.5?"bad":tariff>6?"warn":"good");
+  tEl.className = "v tnum " + (tariff>BASE_TARIFF*1.05?"bad":tariff>=BASE_TARIFF*0.95?"warn":"good");
   document.getElementById("stEnergy").textContent = `${state.energyKWhToday.toFixed(1)} kWh · ₹${state.costToday.toFixed(0)}`;
   document.getElementById("stEnergyTotal").textContent = `${state.energyKWhTotal.toFixed(0)} kWh`;
   document.getElementById("stBillTotal").textContent = `₹${state.costTotal.toFixed(0)}`;
@@ -2441,10 +2464,22 @@ function renderTwin(){
    TOOLTIPS + MODAL
    ============================================================ */
 
+function tariffCardHTML(){
+  const rows = TARIFF_BANDS.map(b=>{
+    const rate = (BASE_TARIFF*b.mult).toFixed(2);
+    const pct = b.mult===1 ? "base rate" : `${b.mult>1?"+":""}${((b.mult-1)*100).toFixed(0)}%`;
+    return `<tr><td>${b.name}</td><td>${b.hours}</td><td class="tnum">₹${rate}</td><td>${pct}</td></tr>`;
+  }).join("");
+  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF.toFixed(2)}/kWh<table class="ratecard">
+    <thead><tr><th>Period</th><th>Hours</th><th>Rate</th><th>vs base</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>Solar-hours and off-peak get a discount; the evening peak gets a surcharge — the same shape most Indian DISCOM commercial/industrial ToU orders use.`;
+}
+
 const TIPS = {
   "head:clock":   "<b>Sim clock</b>The hands actually sweep at simulated speed — orange ring = daytime, blue ring = nighttime. This clock runs much faster than your real clock (see the Sim speed slider): a full lap of the minute hand can pass in a couple of real seconds.",
   "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
-  "head:tariff":  "<b>Grid tariff</b>India-style time-of-use rate (₹/kWh). Hand-authored, not pulled from a real utility schedule.",
+  "head:tariff":  tariffCardHTML(),
   "head:energy":  "<b>Energy today</b>Sum of every zone's compressor draw (kW) × time, at today's tariff. Resets at midnight sim-time.",
   "head:energyTotal": "<b>Total energy</b>Cumulative electricity drawn by all 3 compressor units since the simulation started — never resets, unlike 'Energy Today'.",
   "head:billTotal": "<b>Total bill</b>Cumulative electricity cost since the simulation started, at whatever time-of-use tariff was in effect each minute — never resets.",
@@ -2508,6 +2543,7 @@ const TIPS = {
     const html = TIPS[key];
     if(!html) return;
     tipEl.innerHTML = html;
+    tipEl.classList.toggle("wide", html.includes("<table"));
     current = target;
     position(target);
     tipEl.classList.add("show");
@@ -2651,7 +2687,7 @@ const GLOSSARY = [
   { term:"Capacity fraction", simple:"How hard the compressor is currently working, from 0% (off) to 100% (flat out).", example:"Shown in VFD mode as '% AVG CAPACITY'; always 0% or 100% in on/off modes.", eq:"—", diff:"Real compressors often can't go below a minimum useful speed (e.g. 30%), which this simplifies away." },
   { term:"Chilling injury", simple:"Damage some fruits/vegetables suffer when stored TOO cold — not just too warm. Cold hurts them too.", example:"Why tomato, banana, and mango are deliberately kept at 12-14°C instead of near 0°C.", eq:"—", diff:"Real chilling injury also depends on ripeness stage and variety — this sim uses one fixed safe target per item." },
   { term:"Specific heat (cp) / Siebel's equation", simple:"How much energy it takes to change 1kg of something by 1°C. Watery foods need more energy to cool than dry ones.", example:"Onion (89% water) has cp≈3.8; frozen meat has cp≈2.0.", eq:"cp ≈ 4.19 × water fraction + 1.55 × (1 − water fraction)", diff:"Real cp also changes slightly with temperature and whether the item is fresh, dried, or frozen — this uses one fixed value per item." },
-  { term:"Time-of-use (ToU) tariff", simple:"Electricity that costs more at certain hours of the day (peak demand) and less at others (off-peak, usually overnight).", example:"'Grid Tariff' stat — cheapest 12am-6am, priciest 6pm-10pm, India-style.", eq:"—", diff:"Real tariffs vary by state, utility, and season, and often include additional demand charges this sim doesn't model." },
+  { term:"Time-of-use (ToU) tariff", simple:"Electricity that costs a different amount depending on the hour — cheaper when the grid is under less strain, pricier when everyone wants power at once.", example:"4 bands: Off-Peak 10pm-6am (-20%), Solar 9am-5pm (-15%), Normal the rest, Peak 6pm-10pm (+15%) — hover the 'Grid Tariff' stat for the exact rate card.", eq:"rate = base rate × band multiplier", diff:"Real DISCOM tariff orders vary by state and often add separate fixed demand charges (₹/kVA) this sim doesn't model — only the per-unit energy rate varies here." },
   { term:"Forecast (twin projection)", simple:"The twin's best guess of what temperature is coming next, based on its own current understanding of the building.", example:"The dashed line past 'now' on the Zone temperature chart.", eq:"—", diff:"Real forecasts also factor in tomorrow's actual weather forecast — this assumes today's ambient conditions hold steady." },
   { term:"Advisory layer", simple:"A simple rule-checker that turns the twin's numbers into plain-English suggestions.", example:"The 'AI twin layer' recommendation cards, e.g. 'schedule an early defrost.'", eq:"—", diff:"A real AI system would replace these fixed rules with a model trained on real outcomes." },
   { term:"Anomaly detection", simple:"Noticing a genuine, ongoing problem — as opposed to just one noisy reading — and figuring out roughly what kind of problem it is.", example:"'Service due' / 'Sensor drift' status pills in the AI twin layer table.", eq:"—", diff:"Real anomaly detection also uses historical patterns and can spot problems this sim's simple thresholds would miss." },
