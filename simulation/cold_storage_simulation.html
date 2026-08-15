@@ -127,10 +127,12 @@ header.top{
   padding:6px 12px;
   border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   background:color-mix(in srgb, var(--accent) 8%, transparent);
-  transition:background .12s ease, border-color .12s ease, transform .12s ease;
+  box-shadow:0 3px 0 0 color-mix(in srgb, var(--accent) 30%, transparent);
+  transition:background .1s ease, border-color .1s ease, transform .08s ease, box-shadow .08s ease;
 }
-.hstat-click:hover{ background:color-mix(in srgb, var(--accent) 16%, transparent); border-color:var(--accent); }
-.hstat-click:active{ transform:scale(0.98); }
+.hstat-click:hover{ background:#0b1216; border-color:#0b1216; box-shadow:0 3px 0 0 #000; }
+.hstat-click:hover .l, .hstat-click:hover .v, .hstat-click:hover .clickHint{ color:#fff; }
+.hstat-click:active{ transform:translateY(3px); box-shadow:0 0 0 0 transparent; }
 .hstat-click .clickHint{
   display:flex; align-items:center; justify-content:flex-end; gap:4px;
   font-size:9.5px; color:var(--accent); text-transform:uppercase; letter-spacing:0.03em;
@@ -216,11 +218,18 @@ select{
   font-size:12.5px;
 }
 input[type=range]{ width:120px; }
+/* Every real clickable control shares one tactile language: a raised bottom
+   edge at rest (a genuine 3D push-button feel, not just a flat rectangle),
+   a hover state that inverts to solid black/white so "this does something"
+   is unmistakable, and a press-down animation on :active that removes the
+   raised edge and nudges the button down — it visibly depresses like a
+   physical button, not just changes color. */
 .segmented{
   display:flex;
   border:1px solid var(--line);
   border-radius:7px;
   overflow:hidden;
+  box-shadow:0 2px 0 0 var(--line);
 }
 .segmented button{
   border:none;
@@ -230,11 +239,14 @@ input[type=range]{ width:120px; }
   padding:7px 12px;
   cursor:pointer;
   font-weight:600;
+  transition:background .1s ease, color .1s ease, transform .08s ease;
 }
+.segmented button:hover:not(.active){ background:#0b1216; color:#fff; }
 .segmented button.active{
   background:var(--accent);
   color:#04262c;
 }
+.segmented button:active{ transform:translateY(1px); }
 .btn{
   border:1px solid var(--line);
   background:var(--panel-2);
@@ -244,13 +256,19 @@ input[type=range]{ width:120px; }
   font-size:12.5px;
   font-weight:600;
   cursor:pointer;
+  box-shadow:0 3px 0 0 var(--line);
+  transition:background .1s ease, color .1s ease, border-color .1s ease, transform .08s ease, box-shadow .08s ease;
 }
-.btn:hover{ border-color:var(--accent); }
+.btn:hover{ border-color:#0b1216; background:#0b1216; color:#fff; }
+.btn:active{ transform:translateY(3px); box-shadow:0 0 0 0 transparent; }
 .btn.primary{
   background:var(--accent);
   border-color:var(--accent);
   color:#04262c;
+  box-shadow:0 3px 0 0 var(--accent-2);
 }
+.btn.primary:hover{ background:#0b1216; border-color:#0b1216; color:#fff; }
+.btn.primary:active{ transform:translateY(3px); box-shadow:0 0 0 0 transparent; }
 .btn:focus-visible, select:focus-visible, .segmented button:focus-visible{
   outline:2px solid var(--accent);
   outline-offset:2px;
@@ -395,12 +413,17 @@ canvas.chart{ width:100%; height:110px; display:block; }
   border-radius:99px;
   padding:4px 10px 4px 8px;
   cursor:pointer;
+  box-shadow:0 2px 0 0 color-mix(in srgb, var(--warm) 35%, transparent);
+  transition:background .1s ease, color .1s ease, border-color .1s ease, transform .08s ease, box-shadow .08s ease;
 }
-.dt-badge:hover{ border-color:var(--warm); }
-.dt-badge.events-badge{ color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:color-mix(in srgb, var(--accent) 35%, transparent); }
-.dt-badge.events-badge:hover{ border-color:var(--accent); }
-.dt-badge.glossary-badge{ color:var(--good); background:color-mix(in srgb, var(--good) 14%, transparent); border-color:color-mix(in srgb, var(--good) 35%, transparent); }
-.dt-badge.glossary-badge:hover{ border-color:var(--good); }
+.dt-badge.events-badge{ color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:color-mix(in srgb, var(--accent) 35%, transparent); box-shadow:0 2px 0 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+.dt-badge.glossary-badge{ color:var(--good); background:color-mix(in srgb, var(--good) 14%, transparent); border-color:color-mix(in srgb, var(--good) 35%, transparent); box-shadow:0 2px 0 0 color-mix(in srgb, var(--good) 35%, transparent); }
+/* higher-specificity hover rules, listed after every variant's rest-state
+   color so they always win regardless of source order */
+.dt-badge:hover, .dt-badge.events-badge:hover, .dt-badge.glossary-badge:hover{
+  background:#0b1216; color:#fff; border-color:#0b1216;
+}
+.dt-badge:active{ transform:translateY(2px); box-shadow:0 0 0 0 transparent; }
 
 /* ---------- Events modal ---------- */
 .eventsFilters{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 12px; align-items:center; }
