@@ -171,6 +171,24 @@ header.top{
   border-radius:10px;
   padding:14px 16px;
 }
+/* Same clickable language as the header stats: raised edge at rest,
+   inverts to black/white on hover, presses down on click. */
+.card.card-click{
+  cursor:pointer;
+  box-shadow:0 3px 0 0 var(--line);
+  transition:background .1s ease, border-color .1s ease, transform .08s ease, box-shadow .08s ease;
+}
+.card.card-click:hover{ background:#0b1216; border-color:#0b1216; box-shadow:0 3px 0 0 #000; }
+.card.card-click:hover h2, .card.card-click:hover h2 span, .card.card-click:hover #log,
+.card.card-click:hover #log div, .card.card-click:hover #log div b{ color:#fff !important; }
+.card.card-click:active{ transform:translateY(3px); box-shadow:0 0 0 0 transparent; }
+.card.card-click h2{ display:flex; justify-content:space-between; align-items:center; }
+.card.card-click .clickHint{
+  display:flex; align-items:center; gap:4px; font-size:9.5px; color:var(--accent);
+  text-transform:uppercase; letter-spacing:0.03em; font-weight:700;
+}
+.card.card-click .clickHint svg{ width:11px; height:11px; }
+.logEmpty{ color:var(--ink-dim); font-style:italic; }
 .card h2{
   font-size:12px;
   text-transform:uppercase;
@@ -807,9 +825,12 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
       <div class="chartlabel"><span>0</span><span>100 (discard threshold)</span></div>
     </div>
 
-    <div class="card">
-      <h2>Event log</h2>
-      <div id="log"></div>
+    <div class="card card-click" id="logCardBtn">
+      <h2>
+        <span>Event log</span>
+        <span class="clickHint"><svg viewBox="0 0 20 20" fill="none"><rect x="2.5" y="3.5" width="15" height="14" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M2.5 8h15M6.5 2v3M13.5 2v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Open full log</span>
+      </h2>
+      <div id="log"><div class="logEmpty">Waiting for the first event…</div></div>
     </div>
 
   </div>
@@ -2616,6 +2637,10 @@ function renderTracking(){
 
 function renderLog(){
   const el = document.getElementById("log");
+  if(state.log.length===0){
+    el.innerHTML = `<div class="logEmpty">Waiting for the first event…</div>`;
+    return;
+  }
   el.innerHTML = state.log.slice(-60).reverse().map(e=>
     `<div class="${e.alert?'alert':''}"><b>${e.t}</b> — ${e.msg}</div>`
   ).join("");
@@ -2844,11 +2869,13 @@ function renderEvents(){
 
 (function initEventsModal(){
   const overlay = document.getElementById("eventsModalOverlay");
-  document.getElementById("eventsBadge").addEventListener("click", ()=>{
+  function openEvents(){
     populateEventsDaySelect();
     renderEvents();
     overlay.classList.add("open");
-  });
+  }
+  document.getElementById("eventsBadge").addEventListener("click", openEvents);
+  document.getElementById("logCardBtn").addEventListener("click", openEvents);
   document.getElementById("eventsModalClose").addEventListener("click", ()=> overlay.classList.remove("open"));
   overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
   document.addEventListener("keydown", e=>{ if(e.key==="Escape") overlay.classList.remove("open"); });
@@ -3098,6 +3125,7 @@ function frame(){
   renderTwin();
   renderLoadBreakdown();
   renderTracking();
+  renderLog();
   if(document.getElementById("eventsModalOverlay").classList.contains("open")) renderEvents();
   if(document.getElementById("billModalOverlay").classList.contains("open")) renderBillBreakdown();
   requestAnimationFrame(frame);
