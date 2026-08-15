@@ -104,6 +104,8 @@ header.top{
   cursor:help;
 }
 .clockface{ flex:none; display:block; }
+.hstat-click{ cursor:pointer; border-radius:6px; transition:background .12s ease; padding:2px 6px; margin:-2px -6px; }
+.hstat-click:hover{ background:var(--panel-2); }
 .hstat{ text-align:right; }
 .hstat .l{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-dim); }
 .hstat .v{ font-size:19px; font-weight:700; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
@@ -429,6 +431,50 @@ table.glossaryTable td.gterm{ font-weight:700; font-family:ui-sans-serif,sans-se
 table.glossaryTable td.geq{ font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--accent); font-size:11.5px; }
 table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
 .glossaryEmpty{ padding:30px 10px; text-align:center; color:var(--ink-dim); font-size:13px; }
+
+/* ---------- Bill breakdown modal ---------- */
+#billModalOverlay{
+  position:fixed; inset:0; background:rgba(4,10,14,0.55);
+  display:none; align-items:flex-start; justify-content:center;
+  padding:38px 16px; z-index:900; overflow-y:auto;
+}
+#billModalOverlay.open{ display:flex; }
+#billModal{
+  background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  max-width:880px; width:100%; padding:26px 28px 24px; color:var(--ink);
+}
+#billModal h2.mtitle{ font-size:19px; margin:0 0 3px; text-transform:none; letter-spacing:0; color:var(--ink); font-weight:800; }
+#billModal .mverdict{ font-size:12.5px; color:var(--ink-dim); margin-bottom:16px; }
+#billModal .mclose{ float:right; background:none; border:none; color:var(--ink-dim); font-size:20px; cursor:pointer; line-height:1; }
+.filterGroups{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-bottom:16px; }
+@media (max-width:680px){ .filterGroups{ grid-template-columns:1fr; } }
+.filterGroup{ background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+.filterGroup .fg-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.filterGroup .fg-head span.t{ font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-dim); font-weight:700; }
+.filterGroup .fg-head .fg-links{ font-size:10.5px; }
+.filterGroup .fg-links a{ color:var(--accent); cursor:pointer; text-decoration:none; }
+.filterGroup .fg-links a:hover{ text-decoration:underline; }
+.filterList{ max-height:140px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; }
+.filterList label{ display:flex; align-items:center; gap:7px; font-size:12.5px; cursor:pointer; }
+.filterList input[type=checkbox]{ accent-color:var(--accent); cursor:pointer; }
+.billSummary{
+  display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap;
+}
+.billSummary .bscell{
+  flex:1; min-width:140px; background:color-mix(in srgb, var(--accent) 10%, transparent);
+  border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius:8px; padding:10px 14px;
+}
+.billSummary .bscell .bl{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-dim); }
+.billSummary .bscell .bv{ font-size:20px; font-weight:800; font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; margin-top:2px; }
+.billBreakdowns{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width:680px){ .billBreakdowns{ grid-template-columns:1fr; } }
+table.billTable{ width:100%; border-collapse:collapse; font-size:12px; }
+table.billTable th{ text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); padding:5px 8px; border-bottom:1px solid var(--line); }
+table.billTable td{ padding:6px 8px; border-bottom:1px solid var(--line); font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
+.billBarWrap{ background:var(--panel-2); border-radius:3px; height:6px; margin-top:4px; overflow:hidden; }
+.billBar{ height:100%; background:var(--accent); }
 .dt-badge svg{ width:12px; height:12px; }
 
 /* ---------- Design summary + events modals ---------- */
@@ -509,8 +555,8 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
     <div class="hstat" data-tip="head:tariff"><div class="l">Grid Tariff</div><div class="v tnum" id="stTariff">—</div></div>
     <div class="hstat" data-tip="head:energy"><div class="l">Energy Today</div><div class="v tnum" id="stEnergy">—</div></div>
     <div class="hstat" data-tip="head:spoil"><div class="l">Spoilage Risk</div><div class="v tnum" id="stSpoil">—</div></div>
-    <div class="hstat" data-tip="head:energyTotal"><div class="l">Total Energy</div><div class="v tnum" id="stEnergyTotal">—</div></div>
-    <div class="hstat" data-tip="head:billTotal"><div class="l">Total Bill</div><div class="v tnum" id="stBillTotal">—</div></div>
+    <div class="hstat hstat-click" data-tip="head:energyTotal" id="stEnergyTotalBtn"><div class="l">Total Energy</div><div class="v tnum" id="stEnergyTotal">—</div></div>
+    <div class="hstat hstat-click" data-tip="head:billTotal" id="stBillTotalBtn"><div class="l">Total Bill</div><div class="v tnum" id="stBillTotal">—</div></div>
   </div>
 </header>
 
@@ -813,6 +859,50 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
   </div>
 </div>
 
+<div id="billModalOverlay">
+  <div id="billModal" role="dialog" aria-modal="true" aria-labelledby="billModalTitle">
+    <button class="mclose" id="billModalClose" aria-label="Close">×</button>
+    <h2 class="mtitle" id="billModalTitle">Energy &amp; bill breakdown</h2>
+    <div class="mverdict">Exact figures from the per-tick ledger — filter by any combination of day, tariff period, and chamber at once.</div>
+
+    <div class="filterGroups">
+      <div class="filterGroup">
+        <div class="fg-head"><span class="t">Day</span><span class="fg-links"><a id="billDayAll">all</a> · <a id="billDayNone">none</a></span></div>
+        <div class="filterList" id="billDayList"></div>
+      </div>
+      <div class="filterGroup">
+        <div class="fg-head"><span class="t">Tariff period</span><span class="fg-links"><a id="billPeriodAll">all</a> · <a id="billPeriodNone">none</a></span></div>
+        <div class="filterList" id="billPeriodList"></div>
+      </div>
+      <div class="filterGroup">
+        <div class="fg-head"><span class="t">Chamber</span><span class="fg-links"><a id="billZoneAll">all</a> · <a id="billZoneNone">none</a></span></div>
+        <div class="filterList" id="billZoneList"></div>
+      </div>
+    </div>
+
+    <div class="billSummary">
+      <div class="bscell"><div class="bl">Energy (selection)</div><div class="bv tnum" id="billSumKwh">—</div></div>
+      <div class="bscell"><div class="bl">Bill (selection)</div><div class="bv tnum" id="billSumCost">—</div></div>
+      <div class="bscell"><div class="bl">Avg. rate (selection)</div><div class="bv tnum" id="billSumRate">—</div></div>
+    </div>
+
+    <div class="billBreakdowns">
+      <div>
+        <table class="billTable">
+          <thead><tr><th>By tariff period</th><th>kWh</th><th>₹</th></tr></thead>
+          <tbody id="billByPeriod"></tbody>
+        </table>
+      </div>
+      <div>
+        <table class="billTable">
+          <thead><tr><th>By chamber</th><th>kWh</th><th>₹</th></tr></thead>
+          <tbody id="billByZone"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
 "use strict";
@@ -1004,6 +1094,10 @@ function freshState(){
     costToday: 0,
     energyKWhTotal: 0,   // whole-run total, never resets (unlike the daily figures above)
     costTotal: 0,
+    // energyLedger[day][periodKey][zoneIndex] = {kwh, cost} — an exact, incrementally-
+    // built accumulator (not sampled/estimated) so the bill breakdown can be sliced by
+    // any combination of day / tariff period / chamber without re-deriving from scratch.
+    energyLedger: {},
     energyHistory: [],       // {t, temp[], power, spoil}
     spoilIndex: [0,0,0],     // 0-100, shelf-life consumed by the CURRENT batch in each zone
     batchAgeMin: [0,0,0],    // minutes since the current batch's last stock turnover
@@ -1610,11 +1704,25 @@ function tick(dtMin){
 
   const totalPowerKW = lastZonePowerKW.reduce((a,b)=>a+b,0);
   const kwh = totalPowerKW*(dtMin/60);
-  const kwhCost = kwh*tariffAt(Math.floor((state.tMin/60)%24));
+  const currentHour = (state.tMin/60)%24;
+  const period = tariffPeriodAt(currentHour);
+  const kwhCost = kwh*BASE_TARIFF*period.mult;
   state.energyKWhToday += kwh;
   state.costToday += kwhCost;
   state.energyKWhTotal += kwh;
   state.costTotal += kwhCost;
+
+  // per-zone, per-day, per-tariff-period ledger — this is what the clickable
+  // Total Bill breakdown filters against, exact rather than reconstructed later.
+  const ledgerDay = state.dayCount;
+  if(!state.energyLedger[ledgerDay]) state.energyLedger[ledgerDay] = {};
+  if(!state.energyLedger[ledgerDay][period.key]) state.energyLedger[ledgerDay][period.key] = [{kwh:0,cost:0},{kwh:0,cost:0},{kwh:0,cost:0}];
+  for(let i=0;i<N_ZONES;i++){
+    const zKwh = lastZonePowerKW[i]*(dtMin/60);
+    const bucket = state.energyLedger[ledgerDay][period.key][i];
+    bucket.kwh += zKwh;
+    bucket.cost += zKwh*BASE_TARIFF*period.mult;
+  }
 
   state.energyHistory.push({
     t: state.tMin,
@@ -2464,16 +2572,23 @@ function renderTwin(){
    TOOLTIPS + MODAL
    ============================================================ */
 
+// Inline-styled on purpose (not relying on the .ratecard stylesheet class) so this
+// renders correctly regardless of any CSS cascade/cache timing — the tooltip's own
+// td/th styling shouldn't matter for whether the numbers show up at all.
 function tariffCardHTML(){
+  const cellStyle = "padding:3px 8px 3px 0;border-bottom:1px solid rgba(255,255,255,0.15);white-space:nowrap;";
+  const headStyle = cellStyle+"opacity:0.6;font-size:9.5px;text-transform:uppercase;";
   const rows = TARIFF_BANDS.map(b=>{
     const rate = (BASE_TARIFF*b.mult).toFixed(2);
     const pct = b.mult===1 ? "base rate" : `${b.mult>1?"+":""}${((b.mult-1)*100).toFixed(0)}%`;
-    return `<tr><td>${b.name}</td><td>${b.hours}</td><td class="tnum">₹${rate}</td><td>${pct}</td></tr>`;
+    return `<tr><td style="${cellStyle}">${b.name}</td><td style="${cellStyle}">${b.hours}</td><td style="${cellStyle}" class="tnum">₹${rate}</td><td style="${cellStyle}">${pct}</td></tr>`;
   }).join("");
-  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF.toFixed(2)}/kWh<table class="ratecard">
-    <thead><tr><th>Period</th><th>Hours</th><th>Rate</th><th>vs base</th></tr></thead>
+  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF.toFixed(2)}/kWh
+  <table style="width:100%;border-collapse:collapse;margin:6px 0;font-size:11px;">
+    <thead><tr><th style="${headStyle}">Period</th><th style="${headStyle}">Hours</th><th style="${headStyle}">Rate</th><th style="${headStyle}">vs base</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table>Solar-hours and off-peak get a discount; the evening peak gets a surcharge — the same shape most Indian DISCOM commercial/industrial ToU orders use.`;
+  </table>
+  Solar-hours and off-peak get a discount; the evening peak gets a surcharge — the same shape most Indian DISCOM commercial/industrial ToU orders use.`;
 }
 
 const TIPS = {
@@ -2481,8 +2596,8 @@ const TIPS = {
   "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
   "head:tariff":  tariffCardHTML(),
   "head:energy":  "<b>Energy today</b>Sum of every zone's compressor draw (kW) × time, at today's tariff. Resets at midnight sim-time.",
-  "head:energyTotal": "<b>Total energy</b>Cumulative electricity drawn by all 3 compressor units since the simulation started — never resets, unlike 'Energy Today'.",
-  "head:billTotal": "<b>Total bill</b>Cumulative electricity cost since the simulation started, at whatever time-of-use tariff was in effect each minute — never resets.",
+  "head:energyTotal": "<b>Total energy</b>Cumulative electricity drawn by all 3 compressor units since the simulation started — never resets, unlike 'Energy Today'. Click to break it down by day, tariff period, and chamber.",
+  "head:billTotal": "<b>Total bill</b>Cumulative electricity cost since the simulation started, at whatever time-of-use tariff was in effect each minute — never resets. Click to break it down by day, tariff period, and chamber.",
   "head:spoil":   "<b>Spoilage risk</b>Highest zone's shelf-life-consumed index for its CURRENT batch, 0-100, via Arrhenius/Q10 kinetics. It climbs even at perfect temperature — refrigeration slows spoilage, it doesn't stop it — and resets on stock turnover (truck delivery / scheduled rotation), so a stagnant batch left unrotated for its full shelf life will genuinely reach 100.",
   "door":         "<b>Dock door</b>Zone A only. Opens on truck arrival; while open, warm ambient air infiltrates and the air curtain only partially blocks it.",
   "legend:blue":  "Zone core temperature at or below the product's target setpoint.",
@@ -2728,6 +2843,99 @@ function renderGlossary(filter){
 })();
 
 /* ============================================================
+   BILL BREAKDOWN — reads state.energyLedger (built incrementally in tick(),
+   see the ledger update right after the energy totals) and lets the user
+   slice it by any combination of day / tariff period / chamber at once.
+   ============================================================ */
+
+function populateBillFilters(){
+  const dayList = document.getElementById("billDayList");
+  if(dayList.children.length !== state.dayCount){
+    const checked = new Set([...dayList.querySelectorAll("input:checked")].map(el=>el.value));
+    dayList.innerHTML = "";
+    for(let d=1; d<=state.dayCount; d++){
+      const wasChecked = checked.size===0 || checked.has(String(d));
+      dayList.insertAdjacentHTML("beforeend", `<label><input type="checkbox" value="${d}" ${wasChecked?"checked":""}> Day ${d}</label>`);
+    }
+  }
+  const periodList = document.getElementById("billPeriodList");
+  if(periodList.children.length===0){
+    periodList.innerHTML = TARIFF_BANDS.map(b=>`<label><input type="checkbox" value="${b.key}" checked> ${b.name} <span style="color:var(--ink-dim);font-size:11px">(${b.hours})</span></label>`).join("");
+  }
+  const zoneList = document.getElementById("billZoneList");
+  if(zoneList.children.length===0){
+    zoneList.innerHTML = ZONES.map((name,i)=>`<label><input type="checkbox" value="${i}" checked> ${name}</label>`).join("");
+  }
+}
+
+function getCheckedValues(containerId){
+  return new Set([...document.querySelectorAll(`#${containerId} input:checked`)].map(el=>el.value));
+}
+
+function renderBillBreakdown(){
+  populateBillFilters();
+  const days = getCheckedValues("billDayList");
+  const periods = getCheckedValues("billPeriodList");
+  const zones = getCheckedValues("billZoneList");
+
+  let totalKwh=0, totalCost=0;
+  const byPeriod = {}; TARIFF_BANDS.forEach(b=>byPeriod[b.key]={kwh:0,cost:0});
+  const byZone = [{kwh:0,cost:0},{kwh:0,cost:0},{kwh:0,cost:0}];
+
+  for(const dayStr of Object.keys(state.energyLedger)){
+    if(!days.has(dayStr)) continue;
+    const dayData = state.energyLedger[dayStr];
+    for(const periodKey of Object.keys(dayData)){
+      if(!periods.has(periodKey)) continue;
+      dayData[periodKey].forEach((bucket, zoneIdx)=>{
+        if(!zones.has(String(zoneIdx))) return;
+        totalKwh += bucket.kwh; totalCost += bucket.cost;
+        byPeriod[periodKey].kwh += bucket.kwh; byPeriod[periodKey].cost += bucket.cost;
+        byZone[zoneIdx].kwh += bucket.kwh; byZone[zoneIdx].cost += bucket.cost;
+      });
+    }
+  }
+
+  document.getElementById("billSumKwh").textContent = `${totalKwh.toFixed(1)} kWh`;
+  document.getElementById("billSumCost").textContent = `₹${totalCost.toFixed(0)}`;
+  document.getElementById("billSumRate").textContent = totalKwh>0 ? `₹${(totalCost/totalKwh).toFixed(2)}/kWh` : "—";
+
+  const maxPeriodKwh = Math.max(1, ...TARIFF_BANDS.map(b=>byPeriod[b.key].kwh));
+  document.getElementById("billByPeriod").innerHTML = TARIFF_BANDS.map(b=>{
+    const d = byPeriod[b.key];
+    return `<tr><td class="blabel">${b.name}<div class="billBarWrap"><div class="billBar" style="width:${(d.kwh/maxPeriodKwh*100).toFixed(0)}%"></div></div></td><td>${d.kwh.toFixed(1)}</td><td>₹${d.cost.toFixed(0)}</td></tr>`;
+  }).join("");
+
+  const maxZoneKwh = Math.max(1, ...byZone.map(d=>d.kwh));
+  document.getElementById("billByZone").innerHTML = ZONES.map((name,i)=>{
+    const d = byZone[i];
+    return `<tr><td class="blabel">${name.split(" - ")[0]}<div class="billBarWrap"><div class="billBar" style="width:${(d.kwh/maxZoneKwh*100).toFixed(0)}%"></div></div></td><td>${d.kwh.toFixed(1)}</td><td>₹${d.cost.toFixed(0)}</td></tr>`;
+  }).join("");
+}
+
+(function initBillModal(){
+  const overlay = document.getElementById("billModalOverlay");
+  function openModal(){ renderBillBreakdown(); overlay.classList.add("open"); }
+  document.getElementById("stEnergyTotalBtn").addEventListener("click", openModal);
+  document.getElementById("stBillTotalBtn").addEventListener("click", openModal);
+  document.getElementById("billModalClose").addEventListener("click", ()=> overlay.classList.remove("open"));
+  overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") overlay.classList.remove("open"); });
+  overlay.addEventListener("change", e=>{ if(e.target.matches('input[type=checkbox]')) renderBillBreakdown(); });
+
+  function bulkSet(listId, checked){
+    document.querySelectorAll(`#${listId} input`).forEach(el=> el.checked=checked);
+    renderBillBreakdown();
+  }
+  document.getElementById("billDayAll").addEventListener("click", ()=>bulkSet("billDayList", true));
+  document.getElementById("billDayNone").addEventListener("click", ()=>bulkSet("billDayList", false));
+  document.getElementById("billPeriodAll").addEventListener("click", ()=>bulkSet("billPeriodList", true));
+  document.getElementById("billPeriodNone").addEventListener("click", ()=>bulkSet("billPeriodList", false));
+  document.getElementById("billZoneAll").addEventListener("click", ()=>bulkSet("billZoneList", true));
+  document.getElementById("billZoneNone").addEventListener("click", ()=>bulkSet("billZoneList", false));
+})();
+
+/* ============================================================
    LOOP + WIRING
    ============================================================ */
 
@@ -2795,6 +3003,7 @@ function frame(){
   renderLoadBreakdown();
   renderTracking();
   if(document.getElementById("eventsModalOverlay").classList.contains("open")) renderEvents();
+  if(document.getElementById("billModalOverlay").classList.contains("open")) renderBillBreakdown();
   requestAnimationFrame(frame);
 }
 
