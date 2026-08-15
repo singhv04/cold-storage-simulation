@@ -1,0 +1,2785 @@
+<title>Reefer Bay</title>
+<style>
+:root{
+  --bg: #eef1f2;
+  --panel: #ffffff;
+  --panel-2: #f5f7f8;
+  --line: #d7dee1;
+  --ink: #14202a;
+  --ink-dim: #55666f;
+  --accent: #0891b2;
+  --accent-2: #0e7490;
+  --frost: #38bdf8;
+  --warm: #f59e0b;
+  --bad: #dc2626;
+  --good: #16a34a;
+  --amber-glow: #fbbf24;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg: #0b1216;
+    --panel: #121c22;
+    --panel-2: #0e171c;
+    --line: #223038;
+    --ink: #e6eef1;
+    --ink-dim: #8ba0aa;
+    --accent: #22d3ee;
+    --accent-2: #0891b2;
+    --frost: #67e8f9;
+    --warm: #fbbf24;
+    --bad: #f87171;
+    --good: #4ade80;
+  }
+}
+:root[data-theme="dark"]{
+  --bg: #0b1216;
+  --panel: #121c22;
+  --panel-2: #0e171c;
+  --line: #223038;
+  --ink: #e6eef1;
+  --ink-dim: #8ba0aa;
+  --accent: #22d3ee;
+  --accent-2: #0891b2;
+  --frost: #67e8f9;
+  --warm: #fbbf24;
+  --bad: #f87171;
+  --good: #4ade80;
+}
+
+*{box-sizing:border-box;}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height:100vh;
+}
+.tnum{ font-variant-numeric: tabular-nums; }
+
+.wrap{
+  max-width:1440px;
+  margin:0 auto;
+  padding: 20px 22px 40px;
+}
+
+/* ---------- Header ---------- */
+header.top{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:20px;
+  padding-bottom:14px;
+  border-bottom:1px solid var(--line);
+  margin-bottom:16px;
+  flex-wrap:wrap;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.brand svg{ width:34px; height:34px; flex:none; }
+.brand h1{
+  font-size:20px;
+  letter-spacing:0.02em;
+  font-weight:800;
+  margin:0;
+}
+.brand .sub{
+  font-size:11.5px;
+  color:var(--ink-dim);
+  text-transform:uppercase;
+  letter-spacing:0.09em;
+  margin-top:2px;
+}
+.headstats{
+  display:flex;
+  gap:22px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.hstat.clockstat{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  cursor:help;
+}
+.clockface{ flex:none; display:block; }
+.hstat{ text-align:right; }
+.hstat .l{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-dim); }
+.hstat .v{ font-size:19px; font-weight:700; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.hstat .v.warn{ color:var(--warm); }
+.hstat .v.bad{ color:var(--bad); }
+.hstat .v.good{ color:var(--good); }
+
+/* ---------- Layout ---------- */
+.grid{
+  display:grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap:16px;
+}
+@media (max-width: 980px){ .grid{ grid-template-columns: 1fr; } }
+
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:14px 16px;
+}
+.card h2{
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:0.09em;
+  color:var(--ink-dim);
+  margin:0 0 10px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.stack{ display:flex; flex-direction:column; gap:14px; }
+
+/* ---------- Warehouse canvas ---------- */
+#warehouse{
+  width:100%;
+  height:auto;
+  display:block;
+  border-radius:6px;
+  background: var(--panel-2);
+}
+.legend{
+  display:flex;
+  gap:14px;
+  flex-wrap:wrap;
+  margin-top:10px;
+  font-size:11px;
+  color:var(--ink-dim);
+}
+.legend span{ display:inline-flex; align-items:center; gap:5px; }
+.legend i{ width:10px; height:10px; border-radius:2px; display:inline-block; }
+
+/* ---------- Controls ---------- */
+.row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.row + .row{ margin-top:10px; }
+label.field{ font-size:12.5px; color:var(--ink-dim); }
+select, input[type=range]{
+  accent-color: var(--accent);
+}
+select{
+  background:var(--panel-2);
+  color:var(--ink);
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:6px 8px;
+  font-size:12.5px;
+}
+input[type=range]{ width:120px; }
+.segmented{
+  display:flex;
+  border:1px solid var(--line);
+  border-radius:7px;
+  overflow:hidden;
+}
+.segmented button{
+  border:none;
+  background:var(--panel-2);
+  color:var(--ink-dim);
+  font-size:12px;
+  padding:7px 12px;
+  cursor:pointer;
+  font-weight:600;
+}
+.segmented button.active{
+  background:var(--accent);
+  color:#04262c;
+}
+.btn{
+  border:1px solid var(--line);
+  background:var(--panel-2);
+  color:var(--ink);
+  border-radius:7px;
+  padding:8px 14px;
+  font-size:12.5px;
+  font-weight:600;
+  cursor:pointer;
+}
+.btn:hover{ border-color:var(--accent); }
+.btn.primary{
+  background:var(--accent);
+  border-color:var(--accent);
+  color:#04262c;
+}
+.btn:focus-visible, select:focus-visible, .segmented button:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+/* ---------- Zone table ---------- */
+table.zones{ width:100%; border-collapse:collapse; font-size:12.5px; }
+table.zones th{
+  text-align:left;
+  font-size:10.5px;
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+  color:var(--ink-dim);
+  padding:4px 6px;
+  border-bottom:1px solid var(--line);
+}
+table.zones td{
+  padding:6px 6px;
+  border-bottom:1px solid var(--line);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.pill{
+  display:inline-block;
+  padding:2px 7px;
+  border-radius:99px;
+  font-size:10.5px;
+  font-weight:700;
+  font-family: ui-sans-serif, sans-serif;
+}
+.pill.ok{ background:color-mix(in srgb, var(--good) 20%, transparent); color:var(--good); }
+.pill.warn{ background:color-mix(in srgb, var(--warm) 22%, transparent); color:var(--warm); }
+.pill.bad{ background:color-mix(in srgb, var(--bad) 22%, transparent); color:var(--bad); }
+
+/* ---------- Charts ---------- */
+canvas.chart{ width:100%; height:110px; display:block; }
+.chartlabel{ font-size:11px; color:var(--ink-dim); display:flex; justify-content:space-between; margin-top:4px;}
+
+/* ---------- Heat-load contribution bars ---------- */
+.loadrow{ margin-bottom:11px; }
+.loadrow:last-child{ margin-bottom:0; }
+.loadrow .lr-head{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--ink-dim); margin-bottom:4px; }
+.loadrow .lr-head b{ color:var(--ink); font-weight:600; }
+.loadbar{
+  display:flex; height:16px; border-radius:4px; overflow:hidden;
+  background:var(--panel-2); border:1px solid var(--line);
+}
+.loadbar .seg{ height:100%; }
+.loadbar .seg.cooling{ background:repeating-linear-gradient(135deg, #22d3ee, #22d3ee 4px, #0e171c00 4px, #0e171c00 7px); border-right:2px solid #22d3ee; }
+
+/* ---------- Cumulative fleet/crew stat grid ---------- */
+.cumgrid{
+  display:grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap:8px;
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid var(--line);
+}
+.cumcell{
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:7px 9px;
+}
+.cumcell .cl{ font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-dim); }
+.cumcell .cv{ font-size:14px; font-weight:700; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; margin-top:1px; }
+
+/* ---------- Advisory chips ---------- */
+.advisory{
+  font-size:11.5px;
+  line-height:1.5;
+  padding:7px 9px;
+  border-radius:6px;
+  border-left:3px solid var(--ink-dim);
+  background:var(--panel-2);
+}
+.advisory.ok{ border-left-color:var(--good); }
+.advisory.warn{ border-left-color:var(--warm); }
+.advisory.bad{ border-left-color:var(--bad); }
+.advisory.empty{ color:var(--ink-dim); font-style:italic; border-left-color:var(--line); }
+
+/* ---------- Log ---------- */
+#log{
+  height:150px;
+  overflow-y:auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size:11.5px;
+  display:flex;
+  flex-direction:column-reverse;
+  gap:3px;
+}
+#log div{ color:var(--ink-dim); white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }
+#log div b{ color:var(--ink); font-weight:600; }
+#log div.alert{ color:var(--bad); }
+#log div.alert b{ color:var(--bad); }
+
+.footnote{
+  margin-top:18px;
+  font-size:11.5px;
+  color:var(--ink-dim);
+  line-height:1.6;
+  border-top:1px solid var(--line);
+  padding-top:12px;
+}
+.footnote b{ color:var(--ink); }
+
+/* ---------- Hint / tooltip ---------- */
+[data-tip]{ position:relative; cursor:help; border-bottom:1px dotted var(--ink-dim); }
+.headstats [data-tip]{ border-bottom:none; }
+#tooltip{
+  position:fixed;
+  z-index:1000;
+  max-width:260px;
+  background:var(--ink);
+  color:var(--bg);
+  font-size:11.5px;
+  line-height:1.5;
+  padding:8px 10px;
+  border-radius:6px;
+  pointer-events:none;
+  opacity:0;
+  transform:translateY(4px);
+  transition:opacity .12s ease, transform .12s ease;
+  box-shadow:0 8px 24px rgba(0,0,0,0.25);
+}
+#tooltip.show{ opacity:1; transform:translateY(0); }
+#tooltip b{ display:block; margin-bottom:2px; color:var(--frost); font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; }
+
+/* ---------- Digital-twin badge ---------- */
+.dt-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:10.5px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+  color:var(--warm);
+  background:color-mix(in srgb, var(--warm) 14%, transparent);
+  border:1px solid color-mix(in srgb, var(--warm) 35%, transparent);
+  border-radius:99px;
+  padding:4px 10px 4px 8px;
+  cursor:pointer;
+}
+.dt-badge:hover{ border-color:var(--warm); }
+.dt-badge.events-badge{ color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:color-mix(in srgb, var(--accent) 35%, transparent); }
+.dt-badge.events-badge:hover{ border-color:var(--accent); }
+.dt-badge.glossary-badge{ color:var(--good); background:color-mix(in srgb, var(--good) 14%, transparent); border-color:color-mix(in srgb, var(--good) 35%, transparent); }
+.dt-badge.glossary-badge:hover{ border-color:var(--good); }
+
+/* ---------- Events modal ---------- */
+.eventsFilters{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 12px; align-items:center; }
+.eventsFilters select{
+  background:var(--panel-2); color:var(--ink); border:1px solid var(--line);
+  border-radius:6px; padding:6px 8px; font-size:12.5px;
+}
+.eventsFilters .count{ font-size:11.5px; color:var(--ink-dim); margin-left:auto; }
+.eventsScroll{ max-height:52vh; overflow-y:auto; overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+table.eventsTable{ width:100%; border-collapse:collapse; font-size:12px; min-width:640px; }
+table.eventsTable thead th{
+  position:sticky; top:0; background:var(--panel);
+  text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em;
+  color:var(--ink-dim); padding:7px 10px; border-bottom:1px solid var(--line);
+}
+table.eventsTable td{
+  padding:6px 10px; border-bottom:1px solid var(--line);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  vertical-align:top;
+}
+table.eventsTable td.evname{ font-family: ui-sans-serif, sans-serif; font-weight:600; }
+table.eventsTable td.evspec{ font-family: ui-sans-serif, sans-serif; color:var(--ink-dim); font-size:11.5px; }
+table.eventsTable tr.alertrow td{ color:var(--bad); }
+table.eventsTable tr.alertrow td.evspec{ color:var(--bad); opacity:0.85; }
+.evcat{
+  display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em;
+  padding:2px 6px; border-radius:99px; font-family:ui-sans-serif,sans-serif;
+  background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent);
+}
+.eventsEmpty{ padding:30px 10px; text-align:center; color:var(--ink-dim); font-size:13px; }
+
+/* ---------- Glossary modal ---------- */
+#glossaryModalOverlay{
+  position:fixed; inset:0; background:rgba(4,10,14,0.55);
+  display:none; align-items:flex-start; justify-content:center;
+  padding:38px 16px; z-index:900; overflow-y:auto;
+}
+#glossaryModalOverlay.open{ display:flex; }
+#glossaryModal{
+  background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  max-width:1080px; width:100%; padding:26px 28px 24px; color:var(--ink);
+}
+#glossaryModal h2.mtitle{ font-size:19px; margin:0 0 3px; text-transform:none; letter-spacing:0; color:var(--ink); font-weight:800; }
+#glossaryModal .mverdict{ font-size:12.5px; color:var(--ink-dim); margin-bottom:14px; }
+#glossaryModal .mclose{ float:right; background:none; border:none; color:var(--ink-dim); font-size:20px; cursor:pointer; line-height:1; }
+#glossarySearch{
+  width:100%; background:var(--panel-2); color:var(--ink); border:1px solid var(--line);
+  border-radius:7px; padding:9px 12px; font-size:13px; margin-bottom:12px;
+}
+#glossarySearch:focus-visible{ outline:2px solid var(--good); outline-offset:1px; }
+.glossaryScroll{ max-height:60vh; overflow-y:auto; overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+table.glossaryTable{ width:100%; border-collapse:collapse; font-size:12px; min-width:920px; }
+table.glossaryTable thead th{
+  position:sticky; top:0; background:var(--panel);
+  text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em;
+  color:var(--ink-dim); padding:8px 10px; border-bottom:1px solid var(--line);
+}
+table.glossaryTable td{
+  padding:9px 10px; border-bottom:1px solid var(--line);
+  font-size:12px; vertical-align:top; line-height:1.5;
+}
+table.glossaryTable td.gterm{ font-weight:700; font-family:ui-sans-serif,sans-serif; white-space:nowrap; color:var(--good); }
+table.glossaryTable td.geq{ font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color:var(--accent); font-size:11.5px; }
+table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
+.glossaryEmpty{ padding:30px 10px; text-align:center; color:var(--ink-dim); font-size:13px; }
+.dt-badge svg{ width:12px; height:12px; }
+
+/* ---------- Design summary + events modals ---------- */
+#modalOverlay, #eventsModalOverlay{
+  position:fixed; inset:0; background:rgba(4,10,14,0.55);
+  display:none; align-items:flex-start; justify-content:center;
+  padding:38px 16px; z-index:900; overflow-y:auto;
+}
+#modalOverlay.open, #eventsModalOverlay.open{ display:flex; }
+#modal, #eventsModal{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:12px;
+  max-width:760px;
+  width:100%;
+  padding:26px 28px 24px;
+  color:var(--ink);
+}
+#eventsModal{ max-width:920px; }
+#modal h2.mtitle, #eventsModal h2.mtitle{
+  font-size:19px; margin:0 0 3px; text-transform:none; letter-spacing:0; color:var(--ink); font-weight:800;
+}
+#modal .mverdict, #eventsModal .mverdict{ font-size:12.5px; color:var(--ink-dim); margin-bottom:18px; }
+#modal .mclose, #eventsModal .mclose{
+  float:right; background:none; border:none; color:var(--ink-dim); font-size:20px; cursor:pointer; line-height:1;
+}
+#modal h3{ font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin:20px 0 8px; }
+#modal p, #modal li{ font-size:13px; line-height:1.62; color:var(--ink); }
+#modal ul{ margin:0; padding-left:18px; }
+#modal .verdictbox{
+  display:flex; gap:10px; align-items:flex-start;
+  background:color-mix(in srgb, var(--warm) 10%, transparent);
+  border:1px solid color-mix(in srgb, var(--warm) 30%, transparent);
+  border-radius:8px; padding:12px 14px; margin-bottom:4px;
+}
+#modal .verdictbox b{ color:var(--warm); }
+.twocol{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+@media (max-width:600px){ .twocol{ grid-template-columns:1fr; } }
+.twocol .pro h3{ color:var(--good); }
+.twocol .con h3{ color:var(--bad); }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="1" width="32" height="32" rx="6" stroke="var(--accent)" stroke-width="2"/>
+      <path d="M17 6 L17 28 M8 10.5 L26 23.5 M26 10.5 L8 23.5" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>Reefer Bay</h1>
+      <div class="sub">Cold storage physics simulator — control room view</div>
+    </div>
+    <button class="dt-badge events-badge" id="eventsBadge" type="button">
+      <svg viewBox="0 0 20 20" fill="none"><rect x="2.5" y="3.5" width="15" height="14" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M2.5 8h15M6.5 2v3M13.5 2v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      Events
+    </button>
+    <button class="dt-badge glossary-badge" id="glossaryBadge" type="button">
+      <svg viewBox="0 0 20 20" fill="none"><path d="M4 3.5h9a2 2 0 0 1 2 2V17H6a2 2 0 0 1-2-2V3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4 3.5A2 2 0 0 0 4 15" stroke="currentColor" stroke-width="1.6"/><path d="M7.5 7.5h5M7.5 10.2h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      Glossary
+    </button>
+    <button class="dt-badge" id="dtBadge" type="button">
+      <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="M10 6.2v4.4M10 13.4h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      Simulated twin, not live — read why
+    </button>
+  </div>
+  <div class="headstats">
+    <div class="hstat clockstat" data-tip="head:clock">
+      <canvas id="clockFace" width="88" height="88" class="clockface"></canvas>
+      <div style="text-align:left">
+        <div class="l">Sim Clock</div>
+        <div class="v tnum" id="stClock">Day 1 · 00:00</div>
+        <div class="l" id="stDayPhase" style="margin-top:2px;text-transform:none;letter-spacing:0;">—</div>
+      </div>
+    </div>
+    <div class="hstat" data-tip="head:ambient"><div class="l">Ambient</div><div class="v tnum" id="stAmbient">—</div></div>
+    <div class="hstat" data-tip="head:tariff"><div class="l">Grid Tariff</div><div class="v tnum" id="stTariff">—</div></div>
+    <div class="hstat" data-tip="head:energy"><div class="l">Energy Today</div><div class="v tnum" id="stEnergy">—</div></div>
+    <div class="hstat" data-tip="head:spoil"><div class="l">Spoilage Risk</div><div class="v tnum" id="stSpoil">—</div></div>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- LEFT: warehouse + controls -->
+  <div class="stack">
+
+    <div class="card">
+      <h2>
+        <span>Chamber cross-section — live</span>
+        <span id="doorState" data-tip="door" style="font-weight:700;color:var(--ink-dim)">DOOR CLOSED</span>
+      </h2>
+      <canvas id="warehouse" width="1000" height="480"></canvas>
+      <div class="legend">
+        <span data-tip="legend:blue"><i style="background:#2563eb"></i>at/under target</span>
+        <span data-tip="legend:cyan"><i style="background:#38bdf8"></i>within band</span>
+        <span data-tip="legend:amber"><i style="background:#f59e0b"></i>+4°C over target</span>
+        <span data-tip="legend:red"><i style="background:#dc2626"></i>critical excursion</span>
+        <span style="margin-left:auto" data-tip="legend:sim">frost accumulation, air curtain, forklift &amp; dock events are simulated from the physics state, not decorative</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="row">
+        <label class="field" data-tip="ctrl:mode">Controller strategy</label>
+        <div class="segmented" id="ctrlMode">
+          <button data-mode="rule" class="active" data-tip="ctrl:mode-rule">Two-position (India std.)</button>
+          <button data-mode="adaptive" data-tip="ctrl:mode-adaptive">Adaptive band</button>
+          <button data-mode="vfd" data-tip="ctrl:mode-vfd">Variable-speed (VFD)</button>
+        </div>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="ctrl:product">Product profile</label>
+        <select id="productSel">
+          <optgroup label="General">
+            <option value="dairy">Dairy (0–4°C, τ fast)</option>
+            <option value="meat">Frozen meat (−18°C, τ slow)</option>
+            <option value="produce" selected>Leafy produce (2–6°C, high RH)</option>
+            <option value="pharma">Pharma cold-chain (2–8°C, tight band)</option>
+          </optgroup>
+          <optgroup label="Indian produce">
+            <option value="potato">Potato / aloo (4°C — avoids cold-sweetening)</option>
+            <option value="onion">Onion / pyaaz (2°C, LOW 65% RH)</option>
+            <option value="tomato">Tomato / tamatar (12°C — chilling-sensitive)</option>
+            <option value="banana">Banana / kela (14°C — chilling-sensitive)</option>
+            <option value="mango">Mango / aam (12°C — chilling-sensitive)</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="ctrl:season">Season / ambient profile</label>
+        <select id="seasonSel">
+          <option value="summer" selected>Summer (Apr-Jun), hot dry</option>
+          <option value="monsoon">Monsoon (Jul-Sep), high RH</option>
+          <option value="autumn">Post-monsoon (Oct-Nov), mild</option>
+          <option value="winter">Winter (Dec-Feb), cool dry</option>
+        </select>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="ctrl:speed">Sim speed</label>
+        <input type="range" id="speedRange" min="1" max="8" value="4" />
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <button class="btn primary" id="playBtn" data-tip="ctrl:play">Pause</button>
+        <button class="btn" id="truckBtn" data-tip="ctrl:truck">Trigger truck arrival</button>
+        <button class="btn" id="resetBtn" data-tip="ctrl:reset">Reset run</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Zone telemetry</h2>
+      <table class="zones" id="zoneTable">
+        <thead>
+          <tr>
+            <th>Zone</th>
+            <th data-tip="th:air">Air</th>
+            <th data-tip="th:temp">Product core</th>
+            <th data-tip="th:sensor">Sensor (lag)</th>
+            <th data-tip="th:rh">RH</th>
+            <th data-tip="th:frost">Coil frost</th>
+            <th data-tip="th:batch">Batch age</th>
+            <th data-tip="th:tti">Shelf-life used</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 data-tip="loads:header">What's driving the temperature — live contribution</h2>
+      <div id="loadBreakdown"></div>
+      <div class="legend" style="margin-top:2px">
+        <span data-tip="loads:wall"><i style="background:#64748b"></i>wall/envelope</span>
+        <span data-tip="loads:door"><i style="background:#f59e0b"></i>door infiltration</span>
+        <span data-tip="loads:shift"><i style="background:#a78bfa"></i>workers</span>
+        <span data-tip="loads:stock"><i style="background:#fb7185"></i>incoming stock</span>
+        <span data-tip="loads:defrost"><i style="background:#f43f5e"></i>defrost heater</span>
+        <span data-tip="loads:cooling"><i style="background:#22d3ee"></i>compressor offset</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-tip="tracking:header">Where is everyone — live tracking</h2>
+      <div id="trackingPanel" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT: charts + compressor + log -->
+  <div class="stack">
+
+    <div class="card">
+      <h2>Compressor &amp; defrost</h2>
+      <div class="row">
+        <label class="field" data-tip="comp:state">Compressor state</label>
+        <span class="pill ok tnum" id="compState">OFF</span>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="comp:duty">Duty cycle (last hour)</label>
+        <span class="tnum" id="dutyCycle">0%</span>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="comp:cop">COP (efficiency)</label>
+        <span class="tnum" id="copVal">3.10</span>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="comp:frost">Evaporator frost load</label>
+        <span class="tnum" id="frostVal">0%</span>
+      </div>
+      <div class="row">
+        <label class="field" data-tip="comp:defrost">Next scheduled defrost</label>
+        <span class="tnum" id="nextDefrost">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-tip="twin:header">AI twin layer — calibration &amp; advisories</h2>
+      <table class="zones" id="twinTable">
+        <thead>
+          <tr>
+            <th>Zone</th>
+            <th data-tip="twin:cap">Est. capacity</th>
+            <th data-tip="twin:ua">Est. UA</th>
+            <th data-tip="twin:residual">Residual</th>
+            <th data-tip="twin:status">Status</th>
+          </tr>
+        </thead>
+        <tbody id="twinTbody"></tbody>
+      </table>
+      <div id="advisoryList" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+
+    <div class="card">
+      <h2 data-tip="chart:temp">Zone temperature (°C, last 6h + forecast)</h2>
+      <canvas class="chart" id="chartTemp"></canvas>
+      <div class="chartlabel"><span id="chartTempMin">−25</span><span id="chartTempMax">10</span></div>
+    </div>
+
+    <div class="card">
+      <h2 data-tip="chart:power">Compressor power draw (kW)</h2>
+      <canvas class="chart" id="chartPower"></canvas>
+      <div class="chartlabel"><span>0</span><span id="chartPowerMax">kW</span></div>
+    </div>
+
+    <div class="card">
+      <h2 data-tip="chart:spoil">Spoilage risk index (TTI, Arrhenius-weighted)</h2>
+      <canvas class="chart" id="chartSpoil"></canvas>
+      <div class="chartlabel"><span>0</span><span>100 (discard threshold)</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Event log</h2>
+      <div id="log"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="footnote">
+  <b>What's modeled physically:</b> a per-zone <b>W/kJ energy balance</b> (envelope UA × ΔT, doorway infiltration, shift heat, defrost heater load, minus compressor cooling capacity ÷ COP) integrated against each chamber's real air + product thermal mass — not arbitrary °C/min constants. On top of that sits a closed <b>twin loop</b>: synthetic noisy/lossy telemetry, an online estimator that recalibrates capacity and UA against it, anomaly detection that tells equipment drift apart from sensor faults, a rolling forecast from the calibrated model, and a <code>window.ReeferTwin</code> API for an external AI/optimization layer to read state and issue commands. Click the <b>Events</b> badge for a day-by-day, filterable log of every delivery, put-away, outbound shipment, defrost cycle, maintenance visit, shift change, and alert — each with its real start time and, where applicable, measured duration. Click the other badge for the digital-twin design breakdown.
+</div>
+
+</div>
+
+<div id="tooltip"></div>
+
+<div id="modalOverlay">
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <button class="mclose" id="modalClose" aria-label="Close">×</button>
+    <h2 class="mtitle" id="modalTitle">Design summary — what this actually is, in plain words</h2>
+    <div class="mverdict">No jargon first — read this before trusting any number this tool shows you.</div>
+
+    <div class="verdictbox">
+      <span>⚠</span>
+      <div><b>In one line: this is a pretend cold storage, run entirely by math, that tries to guess its own condition the same way a real monitoring system would.</b> There is no real building, no real compressor, no real sensor anywhere behind this page. Everything — the temperature, the truck arrivals, the workers, the readings on the "sensors" — is calculated. But it's calculated in two separate layers on purpose: one layer plays the role of "the real building" (which we never let the smart layer peek at directly), and a second layer plays the role of "the smart monitoring system," which only ever gets to see noisy, sometimes-missing readings — just like a real facility's software would. That second layer then has to guess, learn, and flag problems using only what it was allowed to see. That's the whole trick that makes this a <i>digital twin</i> instead of just a simulation.</div>
+    </div>
+
+    <h3>How it's built, step by step</h3>
+    <ul>
+      <li><b>Step 1 — a pretend building.</b> Every chamber is modeled as three connected "buckets" of heat: the wall, the air, and the stored product. Heat flows between them the same way it would in real life — warm outside air leaks through the wall, the wall warms the air, the air warms or cools the product depending on whether the compressor is running. This pretend building also "ages" — the compressor slowly loses a bit of its cooling power the more hours it runs, and the sensors slowly drift out of calibration, exactly like real equipment does over months of use. Nothing breaks suddenly; everything wears out gradually.</li>
+      <li><b>Step 2 — pretend sensors.</b> The smart layer is never shown the pretend building's true temperature. It only gets a "sensor reading" — a slightly wrong, slightly delayed, occasionally missing number, the way a real wall-mounted sensor and a real WiFi/network connection would behave.</li>
+      <li><b>Step 3 — a second, independent guess.</b> The smart layer keeps its <i>own</i> private guess of what the temperature is and how strong the compressor really is. Every few seconds it compares its guess to the sensor reading, and if they disagree, it nudges its guess closer to reality — a bit like slowly turning a dial until two clocks agree.</li>
+      <li><b>Step 4 — deciding what's wrong, not just that something's wrong.</b> If the smart layer's guess keeps disagreeing with the sensor no matter how much it adjusts, it tries to figure out <i>why</i>: has the compressor genuinely gotten weaker (equipment wearing out), or is the sensor itself lying (a calibration problem)? It only raises a flag once it's fairly confident which one it is — not on every single noisy reading.</li>
+      <li><b>Step 5 — looking ahead.</b> Every so often, the smart layer runs its own guessed version of the building forward in time to predict what's about to happen over the next 3 hours — that's the dashed line on the temperature chart.</li>
+      <li><b>Step 6 — giving advice.</b> A simple rule-checker looks at all of the above and writes plain-English suggestions ("defrost early," "book a service visit," "pre-cool before the price goes up"). This is deliberately the easiest part to replace with a real AI model later — it already has clean, structured data to read from.</li>
+      <li><b>Step 7 — a door for other programs.</b> Everything the smart layer believes is available through <code>window.ReeferTwin</code> in your browser's console — so another program (or a real AI agent) can read the current state, read the forecast, read the advice, and even trigger events, without touching any of the internal code.</li>
+    </ul>
+
+    <h3>What's still a shortcut (said plainly)</h3>
+    <ul>
+      <li>Each chamber is treated as one well-mixed room — it doesn't know that the back corner might be colder than the middle, the way a real chamber can.</li>
+      <li>The weather, the electricity price, and the compressor's efficiency numbers are all reasonable guesses written by hand, not pulled from a real weather service, a real electricity bill, or a real machine's spec sheet.</li>
+      <li>Spoilage is estimated with one general formula (temperature too high, for too long, spoils food faster) rather than a formula specific to each exact product tested in a lab.</li>
+      <li>The "guessing" logic (Step 3 above) is a simplified version of what real industrial software uses (called a Kalman filter) — it works and settles on the right answer, but it isn't the mathematically optimal version.</li>
+      <li>Random events (which day a truck shows up, how noisy a sensor reading is) aren't reproducible — running the simulation twice won't give identical results.</li>
+    </ul>
+
+    <div class="twocol">
+      <div class="pro">
+        <h3>What's genuinely good about it</h3>
+        <ul>
+          <li>The smart layer actually has to earn its beliefs from noisy data — it isn't secretly told the answer.</li>
+          <li>There's a real, working "plug" (<code>window.ReeferTwin</code>) another program can connect to today.</li>
+          <li>When something looks wrong, it tries to explain <i>why</i>, not just sound an alarm.</li>
+        </ul>
+      </div>
+      <div class="con">
+        <h3>What it can't do yet</h3>
+        <ul>
+          <li>It isn't connected to anything real — so nothing it says applies to an actual building until you connect it to one.</li>
+          <li>Nobody has checked its numbers against a real cold room's real logbook.</li>
+          <li>All 3 chambers still try to hold the SAME temperature (whichever product you pick) — a real facility would run each chamber at its own separate temperature, but that isn't built yet, even though which chamber gets which delivery is now handled correctly.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>What it would take to connect this to a real building</h3>
+    <ul>
+      <li>Swap the hand-guessed building size, wall insulation, and compressor power for your actual building's real drawings and equipment spec sheets.</li>
+      <li>Replace the pretend sensor readings with a real feed from your real sensors (a technical detail: the code calls this feed <code>stepTelemetry()</code> — only that one function needs to change).</li>
+      <li>Replace the hand-written weather and electricity-price guesses with a real weather service and your real electricity bill's rate schedule.</li>
+      <li>Replace the simplified guessing math with proper industrial-grade estimation software, and replace the plain-English advice rules with a trained AI model.</li>
+      <li>If it matters for your product, add the ability to model cold and warm spots inside a single chamber, instead of treating each chamber as one uniform room.</li>
+    </ul>
+  </div>
+</div>
+
+<div id="eventsModalOverlay">
+  <div id="eventsModal" role="dialog" aria-modal="true" aria-labelledby="eventsModalTitle">
+    <button class="mclose" id="eventsModalClose" aria-label="Close">×</button>
+    <h2 class="mtitle" id="eventsModalTitle">Event log</h2>
+    <div class="mverdict">Every structured event the sim has generated — deliveries, put-away, outbound shipments, defrost cycles, maintenance visits, shift changes, alerts, and config changes — filterable by day and category.</div>
+
+    <div class="eventsFilters">
+      <select id="eventsDaySel"></select>
+      <select id="eventsCatSel">
+        <option value="all">All categories</option>
+        <option value="dock">Dock / delivery</option>
+        <option value="logistics">Logistics (put-away, outbound)</option>
+        <option value="defrost">Defrost</option>
+        <option value="maintenance">Maintenance</option>
+        <option value="shift">Shift changes</option>
+        <option value="alert">Alerts</option>
+        <option value="config">Configuration changes</option>
+      </select>
+      <span class="count" id="eventsCount"></span>
+    </div>
+
+    <div class="eventsScroll">
+      <table class="eventsTable">
+        <thead>
+          <tr><th>Time</th><th>Event</th><th>Category</th><th>Zone</th><th>Duration</th><th>Details</th></tr>
+        </thead>
+        <tbody id="eventsTbody"></tbody>
+      </table>
+      <div class="eventsEmpty" id="eventsEmpty" style="display:none">No events for this day / filter combination.</div>
+    </div>
+  </div>
+</div>
+
+<div id="glossaryModalOverlay">
+  <div id="glossaryModal" role="dialog" aria-modal="true" aria-labelledby="glossaryModalTitle">
+    <button class="mclose" id="glossaryModalClose" aria-label="Close">×</button>
+    <h2 class="mtitle" id="glossaryModalTitle">Glossary</h2>
+    <div class="mverdict">Every term used anywhere on this page, explained in plain language — with a real example from this simulation, the equation behind it where there is one, and how it differs from the real world.</div>
+    <input type="text" id="glossarySearch" placeholder="Search terms… (e.g. COP, spoilage, VFD, τ)" />
+    <div class="glossaryScroll">
+      <table class="glossaryTable">
+        <thead>
+          <tr><th>Term</th><th>In plain words</th><th>Example from this sim</th><th>Equation</th><th>How real life differs</th></tr>
+        </thead>
+        <tbody id="glossaryTbody"></tbody>
+      </table>
+      <div class="glossaryEmpty" id="glossaryEmpty" style="display:none">No terms match your search.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   PHYSICAL MODEL
+   ============================================================ */
+
+// cp in kJ/(kg·K) — real specific heats above freezing; frozen meat uses the
+// below-freezing value (~half of fresh) since it's held at -18°C.
+// deliveryIntervalHr / turnoverFraction are logistics facts about the category, not
+// tuning knobs: fresh dairy and produce move on daily/near-daily JIT delivery with
+// small, mostly-complete lot turnover; frozen meat and pharma cold-chain move on
+// slower, scheduled, appointment-booked deliveries with partial lot turnover — this
+// is why the dock schedule and stock-rotation math key off the product, not chance.
+// cp values are derived from each item's real water content via cp ≈ 4.19*water_frac +
+// 1.55*(1-water_frac) (Siebel's equation, the standard food-engineering estimate above
+// freezing) — not picked to make the chart look nice. Storage targets and RH follow
+// published Indian cold-chain / CIPHET-style guidance for that commodity, INCLUDING the
+// fact that several of these are chilling-sensitive and are damaged by being stored too
+// cold — tomato, banana and mango all take a target well above 0°C on purpose.
+const PRODUCTS = {
+  dairy:   { name:"Dairy crates",     target:2,   band:2,  cp:3.9,  tau:18, qten:2.0, refLife:120,  rhTarget:85, deliveryIntervalHr:20, turnoverFraction:0.55 },
+  meat:    { name:"Frozen meat",      target:-18, band:3,  cp:2.0,  tau:55, qten:1.8, refLife:400,  rhTarget:90, deliveryIntervalHr:96, turnoverFraction:0.40 },
+  produce: { name:"Leafy produce",    target:4,   band:2,  cp:3.7,  tau:12, qten:2.5, refLife:72,   rhTarget:95, deliveryIntervalHr:16, turnoverFraction:0.60 },
+  pharma:  { name:"Pharma cold-chain",target:5,   band:1,  cp:3.5,  tau:25, qten:3.0, refLife:200,  rhTarget:60, deliveryIntervalHr:72, turnoverFraction:0.35 },
+
+  // -- Indian produce, added for the specific storage physics that make each one
+  //    different from generic "leafy produce", not just a relabeled entry --
+  potato:  { name:"Potato (aloo)",    target:4,   band:1.5, cp:3.5, tau:22, qten:1.9, refLife:2000, rhTarget:90, deliveryIntervalHr:120, turnoverFraction:0.30,
+             note:"Held near 4°C, not 0°C — below ~3°C starch converts to sugar (cold-induced sweetening), which ruins frying/processing quality." },
+  onion:   { name:"Onion (pyaaz)",    target:2,   band:1.5, cp:3.8, tau:16, qten:2.0, refLife:3200, rhTarget:65, deliveryIntervalHr:144, turnoverFraction:0.28,
+             note:"Wants LOW humidity (~65% RH), the opposite of most produce here — high RH promotes rot and sprouting, so its dehumidification duty is real, not decorative." },
+  tomato:  { name:"Tomato (tamatar)", target:12,  band:2,   cp:3.95, tau:9,  qten:2.8, refLife:336,  rhTarget:90, deliveryIntervalHr:20,  turnoverFraction:0.55,
+             note:"Chilling-injury crop — below ~10°C it pits and loses flavor/ripening ability, so 12°C is the correct target, not a compromise." },
+  banana:  { name:"Banana (kela)",    target:14,  band:1.5, cp:3.4,  tau:11, qten:2.4, refLife:240,  rhTarget:90, deliveryIntervalHr:24,  turnoverFraction:0.50,
+             note:"Chilling-injury crop — skin blackens and ripening stalls below ~13°C, so this needs the warmest target of anything in the list." },
+  mango:   { name:"Mango (aam)",      target:12,  band:2,   cp:3.8,  tau:14, qten:2.2, refLife:480,  rhTarget:85, deliveryIntervalHr:48,  turnoverFraction:0.45,
+             note:"Chilling-sensitive like tomato/banana — held around 12-13°C to ripen safely instead of developing internal breakdown." },
+};
+
+// India's four practical seasons, each with a plausible daily-average temp and
+// swing plus a humidity baseline — pick a season, ambientNow() below handles
+// the actual hour-by-hour (and day-by-day, see below) evolution around it.
+const SEASONS = {
+  summer:  { base:34, swing:7,  rhBase:0.68, rhSwing:0.10 },
+  monsoon: { base:28, swing:3,  rhBase:0.88, rhSwing:0.06 },
+  autumn:  { base:27, swing:6,  rhBase:0.55, rhSwing:0.08 }, // post-monsoon, Oct-Nov
+  winter:  { base:16, swing:5,  rhBase:0.35, rhSwing:0.08 },
+};
+
+// India-style time-of-use tariff (₹/kWh) — swap for a real utility schedule
+function tariffAt(hour){
+  if(hour>=18 && hour<22) return 9.5;   // peak
+  if(hour>=6 && hour<9)   return 7.8;   // morning ramp
+  if(hour>=0 && hour<6)   return 4.2;   // off-peak
+  return 6.5;                            // normal
+}
+
+const ZONES = ["A - Receiving","B - Bulk racks","C - Deep freeze"];
+const N_ZONES = ZONES.length;
+
+// Two real shifts, not a continuous 14-hour blob of people — headcount changes
+// at the shift boundary, and there's a night gap with nobody on the floor.
+const SHIFTS = [
+  { start:7,  end:15, count:4, label:"Morning shift" },
+  { start:15, end:21, count:3, label:"Evening shift" },
+];
+function currentShift(hour){ return SHIFTS.find(s=>hour>=s.start && hour<s.end) || null; }
+
+// Physical plant per chamber — stand-in for a real facility's drawings/datasheet.
+// volume (m3), envelopeArea (m2, for UA calc), productMass (kg), compCapacityW
+// (rated cooling capacity, W), doorAreaM2 (0 = no dock door in this chamber).
+const RHO_AIR = 1.2;        // kg/m3
+const CP_AIR = 1.005;       // kJ/(kg.K)
+const U_VALUE = 0.28;       // W/(m2.K), ~100mm PUF insulated panel
+
+const ZONE_SPECS = [
+  { volume:900,  envelopeArea:260, productMass:6000,  compCapacityW:12000, doorAreaM2:8.5 },
+  { volume:2200, envelopeArea:520, productMass:20000, compCapacityW:22000, doorAreaM2:0   },
+  { volume:650,  envelopeArea:200, productMass:9000,  compCapacityW:9000,  doorAreaM2:0   },
+];
+
+function zoneUA(i){ return ZONE_SPECS[i].envelopeArea * U_VALUE; } // W/K, overall inside-to-outside
+
+// Colder evaporating temperature = harder to pump heat = lower COP — a rough
+// industry heuristic, not a manufacturer curve.
+function ratedCOP(target){ return Math.min(4.2, Math.max(1.4, 2.2 + 0.045*(target+20))); }
+
+/* ============================================================
+   THREE-BODY THERMAL NETWORK, PER ZONE
+   ============================================================
+   Everything up to this point in the file's history lumped "air + product"
+   into one thermal mass. That's wrong in a way that matters: it means a state
+   update never actually depends on the RIGHT previous state for each thing
+   that's physically distinct — a warm pallet just wheeled in doesn't share a
+   temperature with the air blowing past it, an insulated wall doesn't
+   instantly match the air on either side of it, and mixing them into one
+   number erases exactly the dynamics (pre-cooling delay, wall thermal buffering
+   of the daily ambient swing) that a real facility's engineers care about.
+
+   Each zone is now three coupled bodies, each with its own temperature and
+   thermal mass, stepped together every tick — a proper 3-node RC thermal
+   network, the same structural idea as a lumped-parameter HVAC load model:
+
+     ambient <--UA_out--> WALL <--UA_in--> AIR <--hA_product--> PRODUCT
+
+   - WALL: the insulated envelope's own thermal mass. Small (PUF panels are
+     lightweight), so it re-equilibrates in tens of minutes, but it's no longer
+     assumed to have zero mass — a diurnal ambient swing now visibly lags by a
+     little before it reaches the air, instead of transmitting instantly.
+   - AIR: fast, low mass. This is what the compressor directly cools, what
+     infiltration and defrost heat directly land on, and what the thermostat
+     and telemetry sensor actually read — exactly like a real system.
+   - PRODUCT: slow, large mass — this is what actually governs spoilage,
+     because food safety depends on core temperature, not the air temperature
+     that happens to be swirling past it a given minute. It only ever
+     exchanges heat with the air, at a rate set by the product's own τ
+     (from PRODUCTS) — a warm pallet takes hours to pull down even once the
+     air around it is already at setpoint, because that's what τ now means.
+
+   Shelving/racking is deliberately NOT a fourth node: steel racks have
+   modest mass and high conductivity relative to product, so in a real
+   chamber they track air temperature closely — lumping them into the air
+   node is a defensible simplification, not a missing feature. People are
+   correctly NOT a thermal node either — they're transient heat sources (see
+   shiftW below), not part of the refrigerated inventory whose temperature
+   the chamber is trying to hold; modeling their own body temperature would
+   add nothing physically meaningful here.
+   ============================================================ */
+
+const WALL_AREAL_MASS = 4;     // kg/m2 — lightweight PUF sandwich panel
+const WALL_CP = 1.4;           // kJ/(kg.K) — insulation + steel-skin composite, approximate
+
+function wallCapacityKJperK(i){ return ZONE_SPECS[i].envelopeArea * WALL_AREAL_MASS * WALL_CP; }
+function airCapacityKJperK(i){ return ZONE_SPECS[i].volume * RHO_AIR * CP_AIR; }
+function productCapacityKJperK(i){ return ZONE_SPECS[i].productMass * cfg.product.cp; }
+// Convective air<->product coupling (kJ/(min.K)), sized so the product node's
+// own step response time constant equals the product's configured τ (hours) —
+// this is what finally gives τ a real physical job instead of a decorative number.
+function productCouplingKJperMinK(i){ return productCapacityKJperK(i) / Math.max(1, cfg.product.tau*60); }
+
+let state, cfg, running=true, speed=4;
+
+function freshState(){
+  return {
+    tMin: 0,               // sim minutes elapsed
+    zoneTemp: [8, 8, -5],   // PRODUCT core temperature — what spoilage actually tracks
+    airTemp: [8, 8, -5],    // circulating AIR temperature — what the compressor/thermostat/sensor see
+    wallTemp: [16, 16, 10], // envelope's own temperature, its own (small) thermal mass
+    zoneSensor: [8, 8, -5],
+    zoneRH: [0.75, 0.75, 0.80],
+    frost: [0.05, 0.08, 0.12],
+    compressorOn: [false,false,false],
+    capacityFraction: [0,0,0],   // 0-1, actual delivered capacity — =0/1 in on/off modes, continuous in VFD mode
+    piIntegral: [0,0,0],         // VFD-mode PI controller integral term
+    lastHourOnMinutes: [new Array(60).fill(0), new Array(60).fill(0), new Array(60).fill(0)],
+    doorOpen: false,
+    doorTimer: 0,
+    doorOpenTotalToday: 0,
+    putAwayAt: null,       // when the put-away crew is due to clear staged pallets from the dock
+
+    // ---- tracked agents: where people/equipment actually are and how they got
+    // there, driven by the same real events as everything else (deliveries,
+    // put-away, dispatched maintenance) — not decorative background animation.
+    forklift: { zone:0, fromZone:0, toZone:0, progress:1, mission:"idle", jobLabel:null, pendingDwell:0, dwellTimer:0, tripsToday:0, metersToday:0 },
+
+    // ---- cumulative (whole-run, never reset) activity counters — the "how many
+    // visits, how long" ledger sitting alongside the live tracking panel. ----
+    cumulative: {
+      forkliftTrips:0, forkliftMeters:0, forkliftMinutes:0,
+      technicianVisits:0, technicianMinutes:0,
+      truckDeliveries:0, truckOutbound:0,
+      workerPersonHours:0,
+    },
+    energyKWhToday: 0,
+    costToday: 0,
+    energyHistory: [],       // {t, temp[], power, spoil}
+    spoilIndex: [0,0,0],     // 0-100, shelf-life consumed by the CURRENT batch in each zone
+    batchAgeMin: [0,0,0],    // minutes since the current batch's last stock turnover
+    nextDefrostAt: [240, 300, 210],   // minutes, staggered per zone
+    defrosting: [false,false,false],
+    defrostTimer: [0,0,0],
+    truckQueue: 0,
+    log: [],
+    dayCount: 1,
+    activeShiftLabel: null,
+
+    // ---- dock appointment book — generated per day from the product's real
+    // delivery cadence, not rolled minute-by-minute. Real cold stores book dock
+    // slots; they don't get trucks on a random per-minute dice roll.
+    nextTruckAppt: null,     // absolute tMin of the next booked delivery — a single persistent cursor
+
+    // ---- maintenance & calibration visits — dispatched with a realistic lead
+    // time after a genuine drift is detected, not instantly, and not randomly.
+    maintenanceVisit: [null,null,null],   // {scheduledAt, arrivedAt, endsAt, kind:'service'|'calibration'}
+    lastMaintenanceCheckAt: [-99999,-99999,-99999],
+
+    // ---- live heat-load breakdown per zone (W), for the contribution chart ----
+    zoneLoads: [
+      {wall:0, door:0, shift:0, stock:0, defrost:0, cooling:0},
+      {wall:0, door:0, shift:0, stock:0, defrost:0, cooling:0},
+      {wall:0, door:0, shift:0, stock:0, defrost:0, cooling:0},
+    ],
+
+    // ---- telemetry layer (what "sensors" actually transmit — noisy, lossy, quantized) ----
+    telemetry: [8, 8, -5],          // last reported reading per zone, may be stale on dropout
+    telemetryStale: [0,0,0],        // ticks since last successful reading
+
+    // ---- twin state estimator: the twin's own belief + its estimate of plant parameters ----
+    twinPredTemp: [8, 8, -5],       // twin's internal AIR-temp model prediction (matches what the sensor reads)
+    twinProductTemp: [8, 8, -5],    // twin's derived PRODUCT-temp estimate, driven off its own air estimate
+    estCapMult: [1,1,1],            // estimated compressor-capacity multiplier vs nameplate
+    estUaMult: [1,1,1],             // estimated envelope UA multiplier vs design
+    residual: [0,0,0],              // smoothed |twin prediction - telemetry|
+    residualBaseline: [0.3,0.3,0.3],// expected noise-floor residual, for anomaly thresholds
+
+    // ---- real-world equipment aging — gradual, not sudden. Compressors lose a little
+    // capacity per operating hour (valve/seal wear); sensors drift a little per day
+    // (thermistor calibration creep). Neither the twin nor the true plant "breaks" —
+    // both degrade the way real refrigeration equipment actually does, slowly, under load.
+    compRuntimeHr: [0,0,0],         // cumulative hours each compressor has actually run
+    trueCapMult: [1,1,1],           // true capacity vs nameplate, falls slowly with runtime
+    sensorDriftBias: [0,0,0],       // true sensor calibration bias, random-walks slowly
+    maintenanceFlagged: [false,false,false],
+    calibrationFlagged: [false,false,false],
+
+    forecast: [],                   // rolling forward projection from the calibrated twin model
+    advisories: [],                 // AI advisory layer output
+    lastForecastAt: -9999,
+    lastAdvisoryAt: -9999,
+
+    // ---- structured event log — every event that gets a row in the Events tab.
+    // Distinct from `log` (the free-text ticker): each entry has a real category,
+    // an optional zone, an optional duration (open events get closed when the
+    // matching real-world action finishes), and a spec string with the numbers
+    // that made it worth logging.
+    events: [],
+    pendingEvents: {},   // key -> open event object, closed when its real end happens
+    eventSeq: 0,
+  };
+}
+
+function logEvent(msg, alert){
+  state.log.push({t: fmtClock(state.tMin), msg, alert: !!alert});
+  if(state.log.length>200) state.log.shift();
+  renderLog();
+}
+
+/* ============================================================
+   STRUCTURED EVENT LOG — backs the Events tab: per-day, filterable,
+   with real start/end timestamps so duration is an actual measurement
+   (door-open time, technician dwell, defrost length), not a guess.
+   ============================================================ */
+
+function pushEvent({category, name, zone, spec, alert, key}){
+  const evt = {
+    id: state.eventSeq++,
+    day: Math.floor(state.tMin/1440)+1,
+    tStart: state.tMin,
+    tEnd: null,
+    category, name,
+    zone: zone===undefined ? null : zone,
+    spec: spec || "",
+    alert: !!alert,
+  };
+  state.events.push(evt);
+  if(state.events.length>4000) state.events.shift();
+  if(key) state.pendingEvents[key] = evt;
+  return evt;
+}
+
+function closeEvent(key, extraSpec){
+  const evt = state.pendingEvents[key];
+  if(!evt) return;
+  evt.tEnd = state.tMin;
+  if(extraSpec) evt.spec = evt.spec ? `${evt.spec} — ${extraSpec}` : extraSpec;
+  delete state.pendingEvents[key];
+}
+
+function eventDurationMin(evt){
+  return evt.tEnd===null ? null : evt.tEnd-evt.tStart;
+}
+
+function fmtClock(tMin){
+  const day = Math.floor(tMin/1440)+1;
+  const m = Math.floor(tMin%1440);
+  const hh = String(Math.floor(m/60)).padStart(2,"0");
+  const mm = String(m%60).padStart(2,"0");
+  return `Day ${day} · ${hh}:${mm}`;
+}
+
+// India-tuned ambient generator: season sets the daily average/swing/humidity
+// baseline (Summer/Monsoon/Post-monsoon/Winter, picked from the Season control);
+// hour-of-day drives a two-harmonic diurnal curve, not a plain sine — the
+// afternoon peak is sharper and the overnight trough shallower, which matches
+// typical Indian daily temperature records (ground keeps re-radiating heat
+// well after solar peak) better than a symmetric curve. Minimum lands
+// pre-dawn (~5-6am), maximum mid-to-late afternoon (~3-4pm).
+function ambientNow(){
+  const s = SEASONS[cfg.season];
+  const hour = (state.tMin/60) % 24;
+  const phase = ((hour-9)/24)*2*Math.PI;
+  const diurnal = Math.sin(phase) + 0.25*Math.sin(2*phase - Math.PI/2); // asymmetric: sharper rise, slower decay
+  const temp = s.base + s.swing*diurnal/1.25; // /1.25 keeps peak-to-trough amplitude matching `swing`
+  const rh = Math.min(0.98, Math.max(0.15, s.rhBase + s.rhSwing*Math.sin(((hour-4)/24)*2*Math.PI)));
+  return {temp, rh, hour};
+}
+
+// Dock appointments, not dice rolls. A real cold store books delivery slots
+// against the product's actual replenishment cadence — daily-ish for fresh
+// produce, weekly-ish for frozen goods — snapped into the dock's booking
+// window (07:00-21:00) on whatever day they land on. A single persistent
+// "next appointment" cursor works for any cadence, short or long; a
+// day-by-day booked list (the earlier version of this) breaks the moment
+// the cadence is longer than a single day's window, which is exactly the
+// kind of bug that only shows up for the slower-turning products.
+function scheduleNextTruckAppt(afterTMin){
+  const avgGapMin = cfg.product.deliveryIntervalHr*60;
+  let candidate = afterTMin + avgGapMin*(0.85+Math.random()*0.3);
+  const day = Math.floor(candidate/1440);
+  const hourOfDay = (candidate - day*1440)/60;
+  if(hourOfDay < 7){
+    candidate = day*1440 + (7+Math.random()*2)*60;
+  } else if(hourOfDay >= 21){
+    candidate = (day+1)*1440 + (7+Math.random()*2)*60;
+  }
+  state.nextTruckAppt = Math.round(candidate);
+  logEvent(`Next ${cfg.product.name} delivery booked for ${fmtClock(state.nextTruckAppt)} (~${(avgGapMin/60).toFixed(0)}h cadence)`, false);
+}
+
+function checkTruckSchedule(dt){
+  if(state.nextTruckAppt === null) scheduleNextTruckAppt(state.tMin);
+  while(state.nextTruckAppt !== null && state.tMin >= state.nextTruckAppt){
+    state.truckQueue++;
+    state.cumulative.truckDeliveries++;
+    logEvent(`Truck arrived at Zone A dock (booked appointment) — inbound pallets queued`, false);
+    const freshFractionPreview = Math.min(0.85, cfg.product.turnoverFraction + (Math.random()-0.5)*0.08);
+    openDoor(14 + Math.random()*10, "Inbound delivery", `${cfg.product.name}, ~${(freshFractionPreview*100).toFixed(0)}% of Zone A batch refreshed`); // 14-24 min unload+dock, real variance in crew speed
+
+    // --- stock turnover: fresh inbound product dilutes the batch already sitting in
+    // receiving. The fraction that turns over is a property of the product (how it's
+    // actually procured — small frequent lots vs bulk infrequent ones), not a die roll.
+    const freshFraction = freshFractionPreview;
+    state.spoilIndex[0] *= (1-freshFraction);
+    state.batchAgeMin[0] *= (1-freshFraction);
+
+    // --- the incoming pallets are physically warm (ambient temperature), and that mass
+    // blends into the product node's average core temperature right now — THIS is the
+    // real mechanism that creates a multi-hour pre-cooling delay afterwards, driven by
+    // the product/air convective coupling in stepZone, not a separate decay formula.
+    const {temp: ambient} = ambientNow();
+    state.zoneTemp[0] = state.zoneTemp[0]*(1-freshFraction) + ambient*freshFraction;
+
+    scheduleNextTruckAppt(state.tMin);
+  }
+}
+
+// Bulk racks (B) and deep freeze (C) turn over on a slower, scheduled cadence —
+// a weekly outbound/inbound cycle rather than truck-by-truck, since stock there
+// has already been put away rather than sitting at the dock.
+// This is genuine outbound logistics, not abstract "rotation": the forklift
+// pulls the oldest stock from bulk racks / deep freeze, carries it to the dock,
+// and a truck departs with it — which is also WHY it reduces that zone's
+// spoilage index: the highest-risk (oldest) batch is what FIFO ships out first,
+// not a magic reset. Cadence is capped at a quarter of the current product's
+// reference shelf life so a fast-turning item (tomato) can't spoil between two
+// scheduled outbound cycles the way a slow one (potato) legitimately can wait for.
+function maybeRotateStock(dt){
+  [1,2].forEach(i=>{
+    const baseCadenceMin = i===1 ? 4*1440 : 6*1440; // bulk racks turn faster than deep freeze, all else equal
+    const shelfCapMin = cfg.product.refLife*60*0.25;
+    const cadenceMin = Math.max(240, Math.min(baseCadenceMin, shelfCapMin));
+    if(state.tMin % cadenceMin < dt){
+      const freshFraction = Math.min(0.8, cfg.product.turnoverFraction*0.9 + (Math.random()-0.5)*0.06);
+      state.spoilIndex[i] *= (1-freshFraction);
+      state.batchAgeMin[i] *= (1-freshFraction);
+      logEvent(`Outbound pick from ${ZONES[i]} — ${(freshFraction*100).toFixed(0)}% of batch staged for shipment`, false);
+      pushEvent({ category:"logistics", name:"Outbound pick", zone:i, spec:`${(freshFraction*100).toFixed(0)}% of batch staged` });
+      forkliftGo(i, "outbound", 10 + Math.random()*8);
+    }
+  });
+}
+
+// Logs once at each real shift boundary, instead of "workers exist" being
+// re-derived silently every frame with no operational event attached to it.
+function checkShiftChange(){
+  const {hour} = ambientNow();
+  const shift = currentShift(hour);
+  const label = shift ? shift.label : null;
+  if(label !== state.activeShiftLabel){
+    if(shift){
+      logEvent(`${shift.label} clocks in — ${shift.count} on the floor`, false);
+      pushEvent({ category:"shift", name:`${shift.label} clocks in`, spec:`${shift.count} on the floor` });
+    } else {
+      logEvent(`Floor empties out — night skeleton crew only`, false);
+      pushEvent({ category:"shift", name:"Floor empties out", spec:"night skeleton crew only" });
+    }
+    state.activeShiftLabel = label;
+  }
+}
+
+// Dispatch a technician with a realistic lead time: same-day if the issue is
+// caught early in the day, otherwise first thing the next business day — a real
+// facilities team doesn't teleport in the instant a metric crosses a line.
+function dispatchMaintenance(i, kind){
+  if(state.maintenanceVisit[i]) return;
+  const {hour} = ambientNow();
+  const day = Math.floor(state.tMin/1440);
+  let scheduledAt;
+  if(hour < 14){
+    scheduledAt = state.tMin + (60 + Math.random()*180); // 1-4h out, still fits today's route
+  } else {
+    scheduledAt = (day+1)*1440 + (8+Math.random()*3)*60; // next business day, 8-11am
+  }
+  state.maintenanceVisit[i] = { scheduledAt, arrivedAt:null, endsAt:null, kind };
+  logEvent(`Maintenance dispatched for ${ZONES[i]} (${kind==="service"?"refrigeration service":"sensor calibration check"}) — technician ETA ${fmtClock(scheduledAt)}`, false);
+  pushEvent({ category:"maintenance", name:"Maintenance dispatched", zone:i, alert:true, spec:`${kind==="service"?"refrigeration service":"sensor calibration"} — ETA ${fmtClock(scheduledAt)}` });
+}
+
+const TECH_TRAVEL_MIN = 20; // visible drive-in/drive-out time either side of the actual visit
+
+function stepMaintenance(i, dt){
+  const v = state.maintenanceVisit[i];
+  if(!v) return;
+  if(!v.arrivedAt && state.tMin >= v.scheduledAt){
+    v.arrivedAt = state.tMin;
+    v.endsAt = state.tMin + (45 + Math.random()*45); // 45-90 min onsite, a real service call length
+    state.cumulative.technicianVisits++;
+    logEvent(`Technician on site at ${ZONES[i]} — beginning ${v.kind==="service"?"compressor service":"sensor calibration"}`, false);
+    pushEvent({ category:"maintenance", name:"Technician on site", zone:i, spec: v.kind==="service"?"refrigeration service":"sensor calibration", key:`maint:${i}` });
+  }
+  if(v.arrivedAt && !v.completed) state.cumulative.technicianMinutes += dt;
+  if(v.arrivedAt && !v.completed && state.tMin >= v.endsAt){
+    v.completed = true;
+    v.departAt = state.tMin + TECH_TRAVEL_MIN;
+    if(v.kind==="service"){
+      state.compRuntimeHr[i] *= 0.15; // service resets most of the accumulated wear clock (seals/valves refreshed)
+      state.maintenanceFlagged[i] = false;
+      logEvent(`Service complete at ${ZONES[i]} — capacity restored toward nameplate`, false);
+      closeEvent(`maint:${i}`, `capacity restored to ${(state.estCapMult[i]*100).toFixed(0)}%→nameplate`);
+    } else {
+      state.sensorDriftBias[i] = 0;
+      state.calibrationFlagged[i] = false;
+      logEvent(`Sensor recalibrated at ${ZONES[i]}`, false);
+      closeEvent(`maint:${i}`, "sensor bias reset to 0");
+    }
+  }
+  if(v.completed && state.tMin >= v.departAt){
+    state.maintenanceVisit[i] = null;
+  }
+}
+
+function openDoor(minutes, name, spec){
+  state.doorOpen = true;
+  state.doorTimer = minutes;
+  pushEvent({ category:"dock", name: name||"Dock door open", zone:0, spec: spec||"", key:"door" });
+}
+
+function stepDoor(dt){
+  if(state.doorOpen){
+    state.doorTimer -= dt;
+    state.doorOpenTotalToday += dt;
+    if(state.doorTimer<=0){
+      state.doorOpen=false;
+      state.truckQueue = Math.max(0, state.truckQueue-1);
+      logEvent("Dock door closed — air curtain re-sealed", false);
+      closeEvent("door");
+      // real operations don't leave pallets sitting at the dock — a put-away
+      // crew moves them into bulk racks within a couple of hours. Without this,
+      // receiving would keep re-averaging in every delivery's warm mass forever.
+      if(!state.putAwayAt) state.putAwayAt = state.tMin + 60 + Math.random()*90;
+    }
+  }
+}
+
+// Forklift put-away: staged goods leave the dock for whichever chamber actually
+// suits them — a real put-away crew doesn't send everything to the same rack.
+// Anything held at or below -10°C (frozen meat here) is routed to Zone C /
+// deep freeze; everything else, INCLUDING the chilling-sensitive Indian produce
+// (tomato/banana/mango), goes to Zone B / bulk racks — putting a chilling-
+// sensitive item in the deep freeze would injure it, not protect it.
+function putAwayDestination(){
+  return cfg.product.target <= -10 ? 2 : 1;
+}
+
+function stepPutAway(dt){
+  if(!state.putAwayAt || state.tMin < state.putAwayAt) return;
+  const clearedFraction = 0.75; // most of what's staged gets moved; a little always remains mid-handling
+  state.zoneTemp[0] = state.zoneTemp[0]*(1-clearedFraction) + state.airTemp[0]*clearedFraction;
+  state.spoilIndex[0] *= (1-clearedFraction);
+  state.batchAgeMin[0] *= (1-clearedFraction);
+  const dest = putAwayDestination();
+  logEvent(`Put-away crew clears staged pallets from Zone A to ${ZONES[dest]}`, false);
+  pushEvent({ category:"logistics", name:"Put-away", zone:0, spec:`${(clearedFraction*100).toFixed(0)}% cleared to ${ZONES[dest]}` });
+  state.putAwayAt = null;
+  forkliftGo(dest, "put-away", 8 + Math.random()*6);
+}
+
+/* ---------- forklift dispatch: driven by real operational events (put-away,
+   scheduled stock rotation), not idle wandering. Visible travel time is
+   proportional to distance so a trip actually takes a few sim-minutes, not
+   a jump-cut. ---------- */
+const ZONE_SPACING_M = 9; // approx meters between adjacent chamber centers, for the "how far" readout
+
+function forkliftGo(toZone, missionLabel, dwellMin){
+  const f = state.forklift;
+  if(f.mission !== "idle") return; // already out on a job — real single-forklift constraint
+  f.fromZone = f.zone;
+  f.toZone = toZone;
+  f.progress = 0;
+  f.pendingDwell = dwellMin;
+  f.mission = "travel:" + missionLabel;
+  f.jobLabel = missionLabel;
+}
+
+function stepForklift(dt){
+  const f = state.forklift;
+  if(f.mission.startsWith("travel")){
+    state.cumulative.forkliftMinutes += dt;
+    const dist = Math.max(1, Math.abs(f.toZone - f.fromZone));
+    const tripMin = dist*3.5; // ~3.5 sim-min per chamber crossed, a real short indoor drive
+    f.progress = Math.min(1, f.progress + dt/tripMin);
+    if(f.progress >= 1){
+      f.zone = f.toZone;
+      f.tripsToday++;
+      f.metersToday += dist*ZONE_SPACING_M;
+      state.cumulative.forkliftTrips++;
+      state.cumulative.forkliftMeters += dist*ZONE_SPACING_M;
+      if(f.mission === "travel:return"){
+        f.mission = "idle";
+        // an outbound job's stock has now reached the dock — the truck it's leaving on departs here
+        if(f.jobLabel === "outbound"){
+          state.cumulative.truckOutbound++;
+          openDoor(10 + Math.random()*8, "Outbound shipment", `from ${ZONES[f.fromZone]}`);
+          logEvent(`Outbound truck departs Zone A dock with the shipment`, false);
+        }
+        f.jobLabel = null;
+      } else {
+        f.mission = "working";
+        f.dwellTimer = f.pendingDwell;
+      }
+    }
+  } else if(f.mission === "working"){
+    f.dwellTimer -= dt;
+    if(f.dwellTimer <= 0){
+      if(f.zone !== 0){
+        f.fromZone = f.zone; f.toZone = 0; f.progress = 0; f.mission = "travel:return";
+      } else {
+        f.mission = "idle";
+      }
+    }
+  }
+}
+
+// Per-zone electrical draw this tick (kW), filled in by stepZone/stepCompressor
+// so the UI and energy ledger read the same physically-derived numbers.
+let lastZonePowerKW = [0.3, 0.3, 0.3];
+
+// Core per-minute physics for one zone — three coupled energy balances (wall,
+// air, product), each integrated against ITS OWN thermal mass from ITS OWN
+// previous state, then coupled to its neighbors. This is a genuine Markovian
+// step: every quantity computed below reads last tick's wallTemp/airTemp/
+// zoneTemp and nothing else, and every next tick depends on exactly this one.
+function stepZone(i, dt){
+  const target = cfg.product.target;
+  const {temp: ambient, rh: ambRH} = ambientNow();
+  const {hour} = ambientNow();
+  const spec = ZONE_SPECS[i];
+  const uaHalf = zoneUA(i) * 2; // two resistances in series (outside+inside) combine to the original overall UA
+
+  // --- WALL node: conducts with ambient on the outside, air on the inside.
+  // Small thermal mass -> reaches quasi-steady-state in tens of minutes, but
+  // it's no longer assumed to be zero, so an ambient swing visibly lags
+  // slightly before it reaches the air instead of teleporting through.
+  const wallOutW = uaHalf * (ambient - state.wallTemp[i]);
+  const wallInW  = uaHalf * (state.wallTemp[i] - state.airTemp[i]);
+  const dWall = ((wallOutW - wallInW) * (dt*60) / 1000) / wallCapacityKJperK(i);
+  state.wallTemp[i] += dWall;
+
+  // --- doorway infiltration (W) — buoyancy-driven doorway flow, damped by air curtain.
+  // Lands on the AIR node — infiltrating warm air mixes with chamber air directly.
+  let infiltrationW = 0;
+  if(state.doorOpen && spec.doorAreaM2>0){
+    const dT = ambient - state.airTemp[i];
+    const airVelocity = 0.4; // m/s, typical buoyancy-driven doorway flow for this delta-T
+    const curtainEffectiveness = 0.55; // air curtain blocks ~55% of raw infiltration
+    infiltrationW = spec.doorAreaM2 * airVelocity * RHO_AIR * CP_AIR*1000 * dT * (1-curtainEffectiveness);
+  }
+
+  // --- worker/shift sensible heat (W) — headcount from the actual shift roster,
+  // not a flat "is it daytime" guess. ~130W/person, landing on the AIR node —
+  // people heat the room, they don't touch product core temperature directly.
+  const shift = currentShift(hour);
+  const shiftW = shift ? (i===0 ? shift.count*130*1.3 : shift.count*35) : 40;
+
+  // --- compressor cooling (W) — cools the AIR node directly, exactly like a real
+  // evaporator coil; scaled by capacityFraction (1.0 in on/off modes, continuous
+  // in VFD mode), degraded by frosted coil and by gradual real-world equipment wear.
+  const frostPenalty = 1 - Math.min(0.6, state.frost[i]*0.6);
+  const coolingW = state.defrosting[i] ? 0
+    : spec.compCapacityW * frostPenalty * state.trueCapMult[i] * state.capacityFraction[i];
+  // --- defrost heater (W) — injects heat into the AIR node while that evaporator defrosts
+  const defrostHeaterW = state.defrosting[i] ? 2500 : 0;
+
+  // --- AIR <-> PRODUCT convective coupling (W) — the product node only ever
+  // exchanges heat with the air, at a rate set by the product's own τ. This is
+  // the actual mechanism behind "pre-cooling delay": a pallet doesn't cool
+  // because the air did, it cools because it's been convecting with cooled
+  // air for long enough — no shortcuts, no separate decay formula.
+  const productCouplingW = productCouplingKJperMinK(i) * 1000/60 * (state.airTemp[i] - state.zoneTemp[i]);
+
+  // --- incoming warm stock (unload event): a fresh pallet doesn't heat the air much on
+  // its own (it's not radiating like a heater) — it IS warm mass that blends into the
+  // product node's average temperature, which is what actually creates the multi-hour
+  // pre-cool delay this event is supposed to produce. Modeled as instantaneous mass-blend
+  // rather than a stepZone-local heat rate, applied once per truck arrival (see checkTruckSchedule).
+
+  const airNetW = wallInW + infiltrationW + shiftW + defrostHeaterW - coolingW - productCouplingW;
+  state.airTemp[i] += (airNetW * (dt*60) / 1000) / airCapacityKJperK(i);
+
+  const productNetW = productCouplingW;
+  state.zoneTemp[i] += (productNetW * (dt*60) / 1000) / productCapacityKJperK(i);
+
+  // record the raw load breakdown so the UI can show what's actually driving
+  // this zone's AIR temperature right now, as a % share of the gross heat gained.
+  state.zoneLoads[i] = { wall: Math.max(0,wallInW), door: infiltrationW, shift: shiftW, stock: 0, defrost: defrostHeaterW, cooling: coolingW,
+    wallNeg: Math.max(0,-wallInW) }; // a sub-ambient zone can also LOSE heat through walls when ambient dips below it
+
+  // record what the compressor is actually removing, for the power/energy ledger —
+  // derived from coolingW, so it scales correctly whether that's 0/1 (on-off modes)
+  // or continuous (VFD mode): a compressor running at 40% capacity draws roughly
+  // 40% of rated power, not a relay-click's worth either way.
+  lastZonePowerKW[i] = state.defrosting[i]
+    ? defrostHeaterW/1000
+    : (coolingW>0 ? coolingW/(ratedCOP(target)*(1-Math.min(0.35,state.frost[i]*0.35))*1000) : 0.3);
+
+  // --- real-world equipment aging: gradual, load-driven, never sudden. A well
+  // maintained reciprocating compressor loses on the order of 10-15% of rated
+  // capacity over ~15,000-20,000 running hours before a major service — modeled
+  // here as a slow linear wear curve against actual accumulated runtime, plus a
+  // small continuous random walk (normal mechanical variance, not "failure").
+  if(state.compressorOn[i] && !state.defrosting[i]){
+    state.compRuntimeHr[i] += dt/60;
+  }
+  const WEAR_PER_HOUR = 0.10/16000; // ~10% capacity loss per 16,000 running hours
+  const wearFloor = 1 - state.compRuntimeHr[i]*WEAR_PER_HOUR;
+  state.trueCapMult[i] = Math.max(0.8, wearFloor + gaussianNoise(0.0006)*Math.sqrt(dt));
+
+  // sensor calibration creep — thermistors drift a fraction of a degree over
+  // months, not instantly. Occasionally a technician re-zeroes it (small chance
+  // per day), same as a real preventive-maintenance calibration check.
+  state.sensorDriftBias[i] += gaussianNoise(0.0015)*Math.sqrt(dt);
+  if(Math.random() < (0.0007*dt) && Math.abs(state.sensorDriftBias[i])>0.3){
+    state.sensorDriftBias[i] *= 0.15; // periodic recalibration pulls it back near zero
+  }
+
+  // sensor lag — a real chamber sensor reads AIR (it's mounted on the return duct
+  // or wall, not embedded in a pallet), with a small first-order lag from its own
+  // housing thermal mass — a few minutes, unrelated to the product's τ.
+  const SENSOR_HOUSING_TAU_MIN = 4;
+  state.zoneSensor[i] += (state.airTemp[i]-state.zoneSensor[i])/SENSOR_HOUSING_TAU_MIN * dt;
+
+  // --- humidity: psychrometric-ish, coil condenses moisture when compressor runs
+  let rh = state.zoneRH[i];
+  rh += (ambRH - rh) * 0.01 * dt;
+  if(state.compressorOn[i]) rh -= 0.006*dt; // dehumidification via coil condensation
+  if(state.doorOpen && i===0) rh += 0.01*dt;
+  state.zoneRH[i] = Math.min(0.99, Math.max(0.25, rh));
+
+  // --- frost accumulation on coil, function of RH and compressor runtime
+  if(state.compressorOn[i] && !state.defrosting[i]){
+    state.frost[i] = Math.min(1, state.frost[i] + 0.0006*(state.zoneRH[i])*dt);
+  }
+  if(state.defrosting[i]){
+    state.frost[i] = Math.max(0, state.frost[i] - 0.02*dt);
+  }
+
+  // --- spoilage: Arrhenius/Q10 kinetics — rate scales by qten per 5C step above target.
+  // refLife is the shelf life AT target temperature, so the index climbs even under
+  // perfect control — that's real: refrigeration slows spoilage, it doesn't stop it.
+  // batchAgeMin tracks how long the CURRENT batch has been sitting so the number stays
+  // interpretable once stock turns over (see maybeSpawnTruck / maybeRotateStock).
+  state.batchAgeMin[i] += dt;
+  const over = Math.max(0, state.zoneTemp[i]-target);
+  const rateMultiplier = Math.pow(cfg.product.qten, over/5);
+  const decayPerMin = (100/(cfg.product.refLife*60)) * rateMultiplier;
+  state.spoilIndex[i] = Math.min(100, state.spoilIndex[i] + decayPerMin*dt);
+}
+
+function stepCompressor(i, dt){
+  if(state.defrosting[i]){
+    state.capacityFraction[i] = 0;
+    state.defrostTimer[i] -= dt;
+    if(state.defrostTimer[i]<=0){
+      state.defrosting[i]=false;
+      state.compressorOn[i]=false;
+      state.nextDefrostAt[i] = state.tMin + (cfg.product.tau>30? 480: 360);
+      logEvent(`Defrost complete on ${ZONES[i]} evaporator — resuming cooling`, false);
+      closeEvent(`defrost:${i}`, "resumed cooling");
+    }
+    return;
+  }
+
+  if(state.tMin >= state.nextDefrostAt[i]){
+    state.defrosting[i] = true;
+    state.defrostTimer[i] = 18;
+    state.piIntegral[i] = 0;
+    logEvent(`⚠ Scheduled defrost initiated on ${ZONES[i]} evaporator`, true);
+    pushEvent({ category:"defrost", name:"Scheduled defrost", zone:i, alert:true, key:`defrost:${i}` });
+    return;
+  }
+
+  // Controls on AIR temperature, same as a real thermostat/BMS/suction-pressure
+  // setpoint — the compressor has no direct sense of product core temperature,
+  // only of the air it's blowing past the coil, which is exactly why product
+  // lag (τ) matters for what's actually sitting in the chamber.
+  const target = cfg.product.target;
+  const over = state.airTemp[i] - target;
+
+  if(cfg.mode === "vfd"){
+    // Continuous PI capacity modulation — the real behavior of a VFD/digital-
+    // scroll compressor: no relay clicks, capacity tracks error smoothly.
+    const band = cfg.product.band;
+    const Kp = 1/band;           // proportional: at 1 band over, request full capacity
+    const Ki = 0.004;            // integral: slowly trims steady-state offset
+    state.piIntegral[i] = Math.min(2, Math.max(-2, state.piIntegral[i] + over*Ki*dt));
+    let demand = over*Kp + state.piIntegral[i];
+    demand = Math.min(1, Math.max(0, demand));
+    // real compressors can't jump capacity instantly — slew-limit toward demand
+    const maxSlewPerMin = 0.06;
+    const delta = Math.max(-maxSlewPerMin*dt, Math.min(maxSlewPerMin*dt, demand-state.capacityFraction[i]));
+    state.capacityFraction[i] = Math.min(1, Math.max(0, state.capacityFraction[i]+delta));
+    state.compressorOn[i] = state.capacityFraction[i] > 0.03;
+  } else {
+    // Two-position (fixed band) or adaptive-band (retuned deadband) relay control.
+    let band = cfg.product.band;
+    if(cfg.mode==="adaptive"){
+      const recentDuty = state.lastHourOnMinutes[i].reduce((a,b)=>a+b,0)/60;
+      band = recentDuty>0.55 ? band*0.7 : band*1.25; // adapt band to avoid short-cycling / hold tighter under load
+    }
+    if(!state.compressorOn[i] && over > band){
+      state.compressorOn[i] = true;
+      logEvent(`${ZONES[i]} compressor engaged (surge current ~5.8x rated draw for 2s)`, false);
+    } else if(state.compressorOn[i] && over < -band*0.3){
+      state.compressorOn[i] = false;
+    }
+    state.capacityFraction[i] = state.compressorOn[i] ? 1 : 0;
+  }
+
+  state.lastHourOnMinutes[i].shift();
+  state.lastHourOnMinutes[i].push(state.compressorOn[i]?1:0);
+}
+
+function tick(dtMin){
+  state.tMin += dtMin;
+  checkTruckSchedule(dtMin);
+  maybeRotateStock(dtMin);
+  stepDoor(dtMin);
+  stepPutAway(dtMin);
+  stepForklift(dtMin);
+  checkShiftChange();
+  {
+    const activeShift = currentShift((state.tMin/60)%24);
+    if(activeShift) state.cumulative.workerPersonHours += activeShift.count*dtMin/60;
+  }
+  for(let i=0;i<N_ZONES;i++) stepCompressor(i, dtMin);
+  for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin);
+  for(let i=0;i<N_ZONES;i++) stepTelemetry(i, dtMin);
+  for(let i=0;i<N_ZONES;i++) stepTwinEstimator(i, dtMin);
+  for(let i=0;i<N_ZONES;i++) stepMaintenance(i, dtMin);
+
+  const totalPowerKW = lastZonePowerKW.reduce((a,b)=>a+b,0);
+  const kwh = totalPowerKW*(dtMin/60);
+  state.energyKWhToday += kwh;
+  state.costToday += kwh*tariffAt(Math.floor((state.tMin/60)%24));
+
+  state.energyHistory.push({
+    t: state.tMin,
+    temp: state.zoneTemp.slice(),
+    telemetry: state.telemetry.slice(),
+    power: totalPowerKW,
+    spoil: Math.max(...state.spoilIndex),
+  });
+  if(state.energyHistory.length>360) state.energyHistory.shift();
+
+  if(state.tMin % 1440 < dtMin){
+    state.dayCount++;
+    state.energyKWhToday=0; state.costToday=0; state.doorOpenTotalToday=0;
+    state.forklift.tripsToday=0; state.forklift.metersToday=0;
+    logEvent(`— Day ${state.dayCount} begins —`, false);
+  }
+
+  [0,1,2].forEach(i=>{
+    if(state.spoilIndex[i]>90 && Math.random()<0.02){
+      logEvent(`⚠ ${ZONES[i]} spoilage index ${state.spoilIndex[i].toFixed(0)} — nearing discard threshold`, true);
+      pushEvent({ category:"alert", name:"Spoilage risk high", zone:i, alert:true, spec:`index ${state.spoilIndex[i].toFixed(0)}/100` });
+    }
+    if(state.zoneTemp[i] - cfg.product.target > cfg.product.band*2.2 && Math.random()<0.015){
+      logEvent(`⚠ ${ZONES[i]} temp excursion: ${state.zoneTemp[i].toFixed(1)}°C`, true);
+      pushEvent({ category:"alert", name:"Temperature excursion", zone:i, alert:true, spec:`${state.zoneTemp[i].toFixed(1)}°C vs ${cfg.product.target}°C target` });
+    }
+  });
+
+  if(state.tMin - state.lastForecastAt >= 30){ runForecast(); state.lastForecastAt = state.tMin; }
+  if(state.tMin - state.lastAdvisoryAt >= 45){ runAdvisories(); state.lastAdvisoryAt = state.tMin; }
+}
+
+function currentPowerKW(){ return lastZonePowerKW.reduce((a,b)=>a+b,0); }
+
+/* ============================================================
+   TWIN LAYER — telemetry, state estimation, gradual equipment aging,
+   forecasting, and an advisory ("AI") layer on top of the physics.
+
+   This is the part that turns an open-loop simulation into something
+   architecturally deserving the name "digital twin": a synthetic
+   sensor feed, a model that only ever sees that feed (never the
+   ground-truth physics directly), an online estimator that recalibrates
+   the model's parameters against it, anomaly detection on the residual,
+   and a rolling forecast + recommendations built from the calibrated
+   model. Swap stepTelemetry()'s synthetic generator for a real
+   MQTT/OPC-UA ingest and nothing downstream has to change.
+
+   Equipment here degrades the way real refrigeration plant does: slowly,
+   as a function of accumulated runtime (see stepZone's wear model), not
+   as a sudden random "breakdown" — the twin's job is to notice the slow
+   drift before it becomes an excursion, not to react to an alarm bell.
+   ============================================================ */
+
+// Gaussian noise via Box-Muller
+function gaussianNoise(sigma){
+  const u1=Math.random(), u2=Math.random();
+  return sigma * Math.sqrt(-2*Math.log(u1||1e-9)) * Math.cos(2*Math.PI*u2);
+}
+
+// What a real sensor would actually transmit: quantized, noisy, occasionally
+// dropped or held stale, and carrying whatever slow calibration drift has
+// accumulated on the real thermistor (see sensorDriftBias in stepZone).
+function stepTelemetry(i, dt){
+  const dropoutChance = 0.015; // ~1 missed reading per ~70 sim-minutes, occasional comms flakiness
+  if(Math.random() < dropoutChance){
+    state.telemetryStale[i] += dt;
+    return; // hold last reported value — a real dropped MQTT message looks exactly like this
+  }
+  state.telemetryStale[i] = 0;
+  const raw = state.zoneSensor[i] + state.sensorDriftBias[i] + gaussianNoise(0.15);
+  state.telemetry[i] = Math.round(raw*10)/10; // 0.1C quantization, typical of cheap loggers
+}
+
+// Online state estimator: the twin predicts using its OWN model + current
+// parameter estimates, then corrects both its belief and its parameters
+// against telemetry — a simplified recursive (gradient) calibration, the
+// same role a Kalman filter / RLS fit plays in a production twin.
+function stepTwinEstimator(i, dt){
+  const spec = ZONE_SPECS[i];
+  const {temp: ambient} = ambientNow();
+  const target = cfg.product.target;
+
+  // twin's own AIR-node forward step (matches what the sensor actually reads),
+  // using estimated (not true) parameters. The twin does NOT get a wall node —
+  // it only ever sees the aggregate effect through the air, which is realistic:
+  // no real BMS estimates a wall's own internal temperature either.
+  const wallW = zoneUA(i)*state.estUaMult[i] * (ambient - state.twinPredTemp[i]);
+  const frostPenalty = 1 - Math.min(0.6, state.frost[i]*0.6); // frost is directly observed (coil sensor), not estimated
+  let coolingW = 0;
+  if(!state.defrosting[i]) coolingW = spec.compCapacityW*frostPenalty*state.estCapMult[i]*state.capacityFraction[i];
+  const defrostHeaterW = state.defrosting[i] ? 2500 : 0;
+  const doorW = (state.doorOpen && spec.doorAreaM2>0) ? spec.doorAreaM2*0.4*RHO_AIR*CP_AIR*1000*(ambient-state.twinPredTemp[i])*0.45 : 0;
+  const shift = currentShift(ambientNow().hour);
+  const shiftW = shift ? shift.count*(i===0?170:35) : 40;
+  const netW = wallW + doorW + shiftW + defrostHeaterW - coolingW;
+  const airCapKJperK = airCapacityKJperK(i);
+  state.twinPredTemp[i] += (netW*(dt*60)/1000)/airCapKJperK;
+
+  // twin's derived PRODUCT-temp estimate — driven off its own air estimate through
+  // the same convective coupling as the true plant, not observed directly. This is
+  // what the advisory layer actually needs (spoilage tracks product, not air).
+  const coupling = productCouplingKJperMinK(i) * 1000/60 * (state.twinPredTemp[i]-state.twinProductTemp[i]);
+  state.twinProductTemp[i] += (coupling*(dt*60)/1000)/productCapacityKJperK(i);
+
+  // residual between the twin's belief and telemetry — the only signal the twin has
+  const err = state.telemetry[i] - state.twinPredTemp[i];
+  state.residual[i] = state.residual[i]*0.9 + Math.abs(err)*0.1;
+
+  // correction step: nudge the belief toward telemetry (measurement update),
+  // and slowly adapt capacity/UA multipliers to explain persistent bias
+  // (parameter update) — classic dual state+parameter estimation, simplified.
+  const kalmanGain = state.telemetryStale[i]>0 ? 0 : 0.35; // don't trust a stale reading
+  state.twinPredTemp[i] += err*kalmanGain;
+
+  if(state.compressorOn[i] && Math.abs(err) > 0.4){
+    // running too warm vs telemetry -> capacity likely lower than assumed, and vice versa
+    const dir = err>0 ? -1 : 1;
+    state.estCapMult[i] = Math.min(1.05, Math.max(0.4, state.estCapMult[i] + dir*0.0006*dt));
+  } else if(!state.compressorOn[i] && Math.abs(err) > 0.4){
+    const dir = err>0 ? 1 : -1; // drifting warmer/cooler than modeled with compressor off -> envelope UA off
+    state.estUaMult[i] = Math.min(2.0, Math.max(0.5, state.estUaMult[i] + dir*0.001*dt));
+  }
+
+  // anomaly detection: this fires on the SLOW trend the estimator has converged
+  // on, not on any single noisy reading — real equipment drift shows up as
+  // estCapMult settling meaningfully away from 1 over hours of runtime; a sensor
+  // problem shows up as residual staying elevated even once capacity looks calibrated.
+  // Both thresholds are maintenance-planning levels, not emergency alarms — the
+  // equipment is still running, just gradually working harder than nameplate.
+  if(!state.maintenanceFlagged[i] && !state.maintenanceVisit[i] && state.compRuntimeHr[i] > 40 && state.estCapMult[i] < 0.93){
+    state.maintenanceFlagged[i] = true;
+    logEvent(`AI twin: ${ZONES[i]} calibrated capacity has settled at ${(state.estCapMult[i]*100).toFixed(0)}% of nameplate after ${state.compRuntimeHr[i].toFixed(0)}h runtime — normal wear range, but worth scheduling a service check before it tightens further.`, true);
+    dispatchMaintenance(i, "service");
+  }
+  if(!state.calibrationFlagged[i] && !state.maintenanceVisit[i] && state.residual[i] > state.residualBaseline[i]*4 && Math.abs(state.estCapMult[i]-1)<0.08){
+    state.calibrationFlagged[i] = true;
+    logEvent(`AI twin: ${ZONES[i]} sensor residual ${state.residual[i].toFixed(2)}C, ~${(state.residual[i]/state.residualBaseline[i]).toFixed(1)}x baseline with capacity tracking normally — consistent with sensor calibration drift, not equipment. Recommend a calibration check.`, true);
+    dispatchMaintenance(i, "calibration");
+  }
+  // resolution happens when the technician's visit actually completes (stepMaintenance),
+  // not the instant the underlying number recovers on its own
+}
+
+// Forward-simulate the twin's own calibrated model (not the hidden true physics)
+// to produce a rolling forecast — exactly what an external AI system would consume.
+// Projects BOTH nodes: air (what the compressor/thermostat sees) and product
+// (what spoilage actually depends on), coupled the same way the true plant is.
+function runForecast(){
+  const horizon = 180, stepMin = 5;
+  const simAir = state.twinPredTemp.slice();
+  const simProduct = state.twinProductTemp.slice();
+  const simFrost = state.frost.slice();
+  const simCompOn = state.compressorOn.slice();
+  const target = cfg.product.target;
+  const out = [];
+  for(let t=0; t<=horizon; t+=stepMin){
+    const {temp: ambient} = ambientNow(); // holds current ambient flat over the horizon — a simplification
+    for(let i=0;i<N_ZONES;i++){
+      const spec = ZONE_SPECS[i];
+      const band = cfg.product.band;
+      const over = simAir[i]-target;
+      if(!simCompOn[i] && over>band) simCompOn[i]=true;
+      else if(simCompOn[i] && over<-band*0.3) simCompOn[i]=false;
+      const wallW = zoneUA(i)*state.estUaMult[i]*(ambient-simAir[i]);
+      const frostPenalty = 1-Math.min(0.6, simFrost[i]*0.6);
+      const coolingW = simCompOn[i] ? spec.compCapacityW*frostPenalty*state.estCapMult[i] : 0;
+      const couplingW = productCouplingKJperMinK(i) * 1000/60 * (simAir[i]-simProduct[i]);
+      const airNetW = wallW + 150 - coolingW - couplingW;
+      simAir[i] += (airNetW*(stepMin*60)/1000)/airCapacityKJperK(i);
+      simProduct[i] += (couplingW*(stepMin*60)/1000)/productCapacityKJperK(i);
+      if(simCompOn[i]) simFrost[i] = Math.min(1, simFrost[i]+0.0006*0.8*stepMin);
+    }
+    out.push({ t: state.tMin+t, air: simAir.slice(), temp: simProduct.slice() });
+  }
+  state.forecast = out;
+}
+
+// Rule-based advisory layer reading the twin's calibrated state + forecast —
+// the seam where a real optimization/RL agent would plug in.
+function runAdvisories(){
+  const advisories = [];
+  const target = cfg.product.target;
+  for(let i=0;i<N_ZONES;i++){
+    const duty = state.lastHourOnMinutes[i].reduce((a,b)=>a+b,0)/60;
+    if(duty>0.75 && state.frost[i]>0.45){
+      advisories.push({zone:i, level:"warn", text:`${ZONES[i]}: high duty cycle (${(duty*100).toFixed(0)}%) with frost at ${(state.frost[i]*100).toFixed(0)}% — COP is degraded, pulling an early defrost now would likely cost less energy than continuing to run fouled.`});
+    }
+    if(state.estCapMult[i]<0.9){
+      advisories.push({zone:i, level:"bad", text:`${ZONES[i]}: calibrated capacity ${(state.estCapMult[i]*100).toFixed(0)}% of nameplate — schedule a technician visit before it drives sustained excursions.`});
+    }
+    const fc = state.forecast.find(f=>f.t - state.tMin > 55 && f.t - state.tMin < 65);
+    if(fc && fc.temp[i]-target > cfg.product.band*1.8){
+      advisories.push({zone:i, level:"warn", text:`${ZONES[i]}: forecast crosses excursion threshold within ~1h at current duty — consider pre-cooling now while tariff is ${tariffAt(Math.floor((state.tMin/60)%24))<6.5?"low":"not yet peak"}.`});
+    }
+    const hourNow = Math.floor((state.tMin/60)%24);
+    if(tariffAt(hourNow)<5 && tariffAt((hourNow+2)%24)>8 && state.zoneTemp[i]-target < -0.2*cfg.product.band){
+      advisories.push({zone:i, level:"ok", text:`${ZONES[i]}: currently below setpoint during off-peak tariff — good time to let thermal mass coast through the coming peak window instead of cycling then.`});
+    }
+  }
+  state.advisories = advisories.slice(0,6);
+}
+
+/* ============================================================
+   RENDERING — warehouse canvas
+   ============================================================ */
+
+const cv = document.getElementById("warehouse");
+const ctx = cv.getContext("2d");
+let particles = [];
+
+function colorForTemp(t, target){
+  const over = t-target;
+  if(over <= 0.2) return "#2563eb";
+  if(over <= 1.5) return "#38bdf8";
+  if(over <= 4) return "#f59e0b";
+  return "#dc2626";
+}
+
+/* ---------- simple flat clip-art icons, drawn not photographed ---------- */
+
+function drawTruck(gctx, x, y, isDark){
+  gctx.save();
+  gctx.translate(x,y);
+  // trailer box
+  gctx.fillStyle = "#e2e8f0";
+  gctx.strokeStyle = isDark? "#04262c":"#334155";
+  gctx.lineWidth = 1.2;
+  gctx.fillRect(0,-22,46,22);
+  gctx.strokeRect(0,-22,46,22);
+  gctx.strokeStyle = "#94a3b8";
+  gctx.beginPath(); gctx.moveTo(14,-22); gctx.lineTo(14,0); gctx.moveTo(30,-22); gctx.lineTo(30,0); gctx.stroke();
+  // cab
+  gctx.fillStyle = "#f59e0b";
+  gctx.beginPath();
+  gctx.moveTo(46,0); gctx.lineTo(46,-16); gctx.lineTo(54,-16); gctx.lineTo(62,-6); gctx.lineTo(62,0); gctx.closePath();
+  gctx.fill(); gctx.stroke();
+  gctx.fillStyle = "#bae6fd";
+  gctx.fillRect(50,-14,8,6);
+  // wheels
+  gctx.fillStyle = "#1e293b";
+  [10,38,54].forEach(wx=>{ gctx.beginPath(); gctx.arc(wx,2,4,0,Math.PI*2); gctx.fill(); });
+  gctx.restore();
+}
+
+function drawForklift(gctx, x, y, mastUp){
+  gctx.save();
+  gctx.translate(x,y);
+  gctx.fillStyle="#f59e0b";
+  gctx.strokeStyle="#7c2d12";
+  gctx.lineWidth=1;
+  gctx.fillRect(0,-10,16,10);
+  gctx.strokeRect(0,-10,16,10);
+  gctx.fillStyle="#1e293b";
+  gctx.beginPath(); gctx.arc(3,1,3,0,Math.PI*2); gctx.fill();
+  gctx.beginPath(); gctx.arc(13,1,3,0,Math.PI*2); gctx.fill();
+  // mast + forks
+  gctx.strokeStyle="#475569";
+  gctx.lineWidth=1.6;
+  gctx.beginPath(); gctx.moveTo(16,-12); gctx.lineTo(16,2); gctx.stroke();
+  gctx.beginPath(); gctx.moveTo(16,-2-(mastUp?6:0)); gctx.lineTo(21,-2-(mastUp?6:0)); gctx.stroke();
+  if(mastUp){
+    gctx.fillStyle="#d6bfa1";
+    gctx.fillRect(15,-16,7,6);
+  }
+  gctx.restore();
+}
+
+function drawWorker(gctx, x, y, isDark){
+  gctx.save();
+  gctx.translate(x,y);
+  gctx.fillStyle = isDark? "#e6eef1":"#334155";
+  gctx.beginPath(); gctx.arc(0,-13,3,0,Math.PI*2); gctx.fill(); // head
+  gctx.fillStyle = "#f59e0b"; // hi-vis vest
+  gctx.beginPath();
+  gctx.moveTo(-3,-10); gctx.lineTo(3,-10); gctx.lineTo(4,0); gctx.lineTo(-4,0); gctx.closePath();
+  gctx.fill();
+  gctx.strokeStyle = isDark? "#8ba0aa":"#55666f";
+  gctx.lineWidth=1.4;
+  gctx.beginPath(); gctx.moveTo(-2,0); gctx.lineTo(-3,7); gctx.moveTo(2,0); gctx.lineTo(3,7); gctx.stroke(); // legs
+  gctx.restore();
+}
+
+// A technician is visually distinct from floor staff — blue coveralls + toolbox —
+// and only ever drawn during an actual dispatched, scheduled visit.
+function drawTechnician(gctx, x, y, isDark){
+  gctx.save();
+  gctx.translate(x,y);
+  gctx.fillStyle = isDark? "#e6eef1":"#334155";
+  gctx.beginPath(); gctx.arc(0,-13,3,0,Math.PI*2); gctx.fill();
+  gctx.fillStyle = "#2563eb"; // coveralls
+  gctx.beginPath();
+  gctx.moveTo(-3,-10); gctx.lineTo(3,-10); gctx.lineTo(4,0); gctx.lineTo(-4,0); gctx.closePath();
+  gctx.fill();
+  gctx.strokeStyle = isDark? "#8ba0aa":"#55666f";
+  gctx.lineWidth=1.4;
+  gctx.beginPath(); gctx.moveTo(-2,0); gctx.lineTo(-3,7); gctx.moveTo(2,0); gctx.lineTo(3,7); gctx.stroke();
+  gctx.fillStyle = "#f59e0b"; // toolbox
+  gctx.fillRect(5,-4,6,4);
+  gctx.restore();
+}
+
+function drawWarehouse(){
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+
+  const isDark = matchMedia('(prefers-color-scheme: dark)').matches &&
+    document.documentElement.getAttribute('data-theme')!=='light' ||
+    document.documentElement.getAttribute('data-theme')==='dark';
+  const wallColor = isDark ? "#223038" : "#c7d2d6";
+  const floorColor = isDark ? "#0e171c" : "#e4e9eb";
+
+  // floor
+  ctx.fillStyle = floorColor;
+  ctx.fillRect(0,0,W,H);
+
+  // three chamber bays
+  const bayW = W/3;
+  for(let i=0;i<3;i++){
+    const x0 = i*bayW+14, x1=(i+1)*bayW-14;
+    const y0=40, y1=H-70;
+
+    // wall / insulation shell
+    ctx.strokeStyle = wallColor;
+    ctx.lineWidth = 10;
+    ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+
+    // temp tint overlay
+    const c = colorForTemp(state.zoneTemp[i], cfg.product.target);
+    ctx.fillStyle = c+"22";
+    ctx.fillRect(x0,y0,x1-x0,y1-y0);
+
+    // racks with pallets — colored by local temp w/ slight noise
+    const rows=4, cols=5;
+    const padX=18, padY=18;
+    const cellW=(x1-x0-2*padX)/cols, cellH=(y1-y0-2*padY)/rows;
+    for(let r=0;r<rows;r++){
+      for(let cix=0; cix<cols; cix++){
+        const px = x0+padX+cix*cellW+3;
+        const py = y0+padY+r*cellH+3;
+        const jitter = (Math.sin(r*13+cix*7+state.tMin*0.01)*0.4);
+        const pc = colorForTemp(state.zoneTemp[i]+jitter, cfg.product.target);
+        ctx.fillStyle = pc;
+        ctx.globalAlpha=0.85;
+        ctx.fillRect(px,py,cellW-7,cellH-7);
+        ctx.globalAlpha=1;
+        ctx.strokeStyle = isDark? "#04262c":"#ffffff88";
+        ctx.lineWidth=1;
+        ctx.strokeRect(px,py,cellW-7,cellH-7);
+        // crate/box texture — a cross-brace line, cheap but reads as a pallet, not a swatch
+        ctx.beginPath();
+        ctx.moveTo(px+3, py+(cellH-7)/2);
+        ctx.lineTo(px+cellW-10, py+(cellH-7)/2);
+        ctx.strokeStyle = isDark? "#04262c55":"#ffffff55";
+        ctx.stroke();
+      }
+    }
+
+    // evaporator unit top
+    ctx.fillStyle = isDark? "#1a262c":"#9fb0b6";
+    ctx.fillRect(x0+8,y0-2,x1-x0-16,14);
+    // fan blades spin if compressor on
+    const fanCx = x0+(x1-x0)/2, fanCy=y0+5;
+    ctx.save();
+    ctx.translate(fanCx,fanCy);
+    if(state.compressorOn[i]) ctx.rotate((state.tMin*40*Math.max(0.35,state.capacityFraction[i]))%360 * Math.PI/180);
+    ctx.strokeStyle = "#04262c";
+    ctx.lineWidth=2;
+    for(let a=0;a<3;a++){
+      ctx.beginPath();
+      const ang = a*(Math.PI*2/3);
+      ctx.moveTo(0,0);
+      ctx.lineTo(Math.cos(ang)*6, Math.sin(ang)*6);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // zone label — product core (what matters for spoilage) plus air temp (what's controlled)
+    ctx.fillStyle = isDark? "#8ba0aa":"#55666f";
+    ctx.font = "11px ui-sans-serif, sans-serif";
+    ctx.fillText(ZONES[i], x0+4, y1+16);
+    ctx.font="bold 13px ui-monospace, monospace";
+    ctx.fillStyle = c;
+    ctx.fillText(`${state.zoneTemp[i].toFixed(1)}°C core`, x0+4, y1+32);
+    ctx.font="11px ui-monospace, monospace";
+    ctx.fillStyle = isDark? "#8ba0aa":"#55666f";
+    ctx.fillText(`air ${state.airTemp[i].toFixed(1)}°C`, x0+4, y1+45);
+
+    // frost buildup indicator (little ice tick marks on evaporator)
+    const frostN = Math.round(state.frost[i]*8);
+    ctx.strokeStyle="#bfe9ff";
+    for(let f=0; f<frostN; f++){
+      ctx.beginPath();
+      ctx.moveTo(x0+14+f*8, y0+12);
+      ctx.lineTo(x0+14+f*8, y0+18);
+      ctx.stroke();
+    }
+    if(state.defrosting[i]){
+      ctx.fillStyle="#f59e0b";
+      ctx.font="bold 10px ui-sans-serif, sans-serif";
+      ctx.fillText("DEFROST", x1-58, y0-6);
+    }
+
+    // door on zone 0 only
+    if(i===0){
+      const doorX = x0+ (x1-x0) - 30;
+      const openAmt = state.doorOpen ? 1 : 0;
+      ctx.fillStyle = isDark? "#0e171c":"#8b9aa0";
+      ctx.fillRect(doorX, y0, 26, (y1-y0)*(1-openAmt*0.75));
+      ctx.fillStyle= state.doorOpen ? "#f59e0b":"#16a34a";
+      ctx.fillRect(doorX, y1-6, 26, 6);
+    }
+  }
+
+  // dock truck — always at Zone A, the only chamber with a dock door
+  if(state.doorOpen || state.truckQueue>0){
+    drawTruck(ctx, 4, H-24, isDark);
+  }
+
+  // forklift — driven entirely by state.forklift (see stepForklift): its
+  // canvas x position IS its real progress between the two zones it's
+  // actually moving between, not a decorative bob.
+  {
+    const f = state.forklift;
+    const zoneCenterX = zi => zi*bayW + bayW/2;
+    let fx;
+    if(f.mission.startsWith("travel")){
+      fx = zoneCenterX(f.fromZone) + (zoneCenterX(f.toZone)-zoneCenterX(f.fromZone))*f.progress;
+    } else {
+      fx = zoneCenterX(f.zone);
+    }
+    drawForklift(ctx, fx, H-24, f.mission!=="idle");
+  }
+
+  // workers on shift — headcount and ZONE from the real shift roster: most of
+  // the crew stages near receiving, a couple work bulk racks, at most one
+  // covers deep freeze, matching how a small cold-store crew is actually spread.
+  {
+    const hourNow = (state.tMin/60)%24;
+    const shift = currentShift(hourNow);
+    if(shift){
+      const roster = [];
+      for(let wi=0; wi<shift.count; wi++){
+        roster.push(wi===0||wi===1 ? 0 : (wi===2 ? 1 : 2));
+      }
+      const perZoneCount = {};
+      roster.forEach((z,idx)=>{
+        perZoneCount[z] = (perZoneCount[z]||0);
+        const nInZone = roster.filter(r=>r===z).length;
+        const slot = perZoneCount[z]++;
+        const x0 = z*bayW+14, x1=(z+1)*bayW-14;
+        const f = 0.28 + (slot/(Math.max(1,nInZone-1)||1))*0.44;
+        const wx = x0 + (x1-x0)*f + Math.sin(state.tMin*0.05+idx*2)*6;
+        drawWorker(ctx, wx, H-26, isDark);
+      });
+    }
+  }
+
+  // maintenance technician — position derived directly from the dispatched
+  // visit's own timestamps: driving in before scheduledAt, stationed while
+  // working, driving out after endsAt. No separate "technician" state needed.
+  for(let i=0;i<N_ZONES;i++){
+    const v = state.maintenanceVisit[i];
+    if(!v) continue;
+    const x0 = i*bayW+14, x1=(i+1)*bayW-14;
+    const zoneX = x0+(x1-x0)/2-6;
+    const offsiteX = -30;
+    if(v.arrivedAt && !v.completed){
+      drawTechnician(ctx, zoneX, 46, isDark);
+    } else if(!v.arrivedAt && state.tMin >= v.scheduledAt-TECH_TRAVEL_MIN){
+      const p = Math.min(1, Math.max(0,(state.tMin-(v.scheduledAt-TECH_TRAVEL_MIN))/TECH_TRAVEL_MIN));
+      drawTechnician(ctx, offsiteX+(zoneX-offsiteX)*p, H-24, isDark);
+    } else if(v.completed && state.tMin < v.departAt){
+      const p = Math.min(1, Math.max(0,(state.tMin-v.endsAt)/(v.departAt-v.endsAt)));
+      drawTechnician(ctx, zoneX+(offsiteX-zoneX)*p, H-24, isDark);
+    }
+  }
+
+  // compressor / condenser box, bottom strip
+  const anyOn = state.compressorOn.some(Boolean);
+  const anyDefrost = state.defrosting.some(Boolean);
+  ctx.fillStyle = isDark? "#0e171c":"#c7d2d6";
+  ctx.fillRect(0,H-24,W,24);
+  ctx.fillStyle = anyOn ? "#22d3ee" : (isDark?"#3a4a52":"#8b9aa0");
+  ctx.beginPath();
+  ctx.arc(16,H-12,6,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = isDark? "#8ba0aa":"#55666f";
+  ctx.font="11px ui-monospace, monospace";
+  const onCount = state.compressorOn.filter(Boolean).length;
+  const plantStatus = anyDefrost ? "DEFROST ACTIVE"
+    : cfg.mode==="vfd" ? `${(state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100).toFixed(0)}% AVG CAPACITY (VFD)`
+    : (anyOn?`${onCount}/3 UNITS RUNNING`:"IDLE");
+  ctx.fillText(`CONDENSER / COMPRESSOR PLANT — ${plantStatus}  ·  ${currentPowerKW().toFixed(1)} kW`, 30, H-8);
+}
+
+/* ============================================================
+   RENDERING — sparkline charts
+   ============================================================ */
+
+function drawLineChart(canvas, series, opts){
+  const dctx = canvas.getContext("2d");
+  const w = canvas.width = canvas.clientWidth * devicePixelRatio;
+  const h = canvas.height = canvas.clientHeight * devicePixelRatio;
+  dctx.clearRect(0,0,w,h);
+  if(series.length<2) return;
+
+  const isDark = getComputedStyle(document.body).getPropertyValue('color-scheme') === 'dark';
+  const gridColor = "rgba(128,142,150,0.18)";
+  dctx.strokeStyle = gridColor;
+  dctx.lineWidth=1;
+  for(let g=1; g<4; g++){
+    const y = h*(g/4);
+    dctx.beginPath(); dctx.moveTo(0,y); dctx.lineTo(w,y); dctx.stroke();
+  }
+
+  const min = opts.min !== undefined ? opts.min : Math.min(...series);
+  const max = opts.max !== undefined ? opts.max : Math.max(...series);
+  const range = (max-min)||1;
+
+  function pt(i){
+    const x = (i/(series.length-1))*w;
+    const y = h - ((series[i]-min)/range)*h*0.86 - h*0.06;
+    return [x,y];
+  }
+
+  // fill
+  const grad = dctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0, opts.color+"55");
+  grad.addColorStop(1, opts.color+"02");
+  dctx.beginPath();
+  dctx.moveTo(0,h);
+  series.forEach((_,i)=>{ const [x,y]=pt(i); dctx.lineTo(x,y); });
+  dctx.lineTo(w,h);
+  dctx.closePath();
+  dctx.fillStyle=grad;
+  dctx.fill();
+
+  // line — solid up to splitIndex (observed history), dashed after (twin forecast)
+  const splitIndex = opts.splitIndex !== undefined ? opts.splitIndex : series.length-1;
+  dctx.beginPath();
+  series.forEach((_,i)=>{ if(i>splitIndex) return; const [x,y]=pt(i); i===0?dctx.moveTo(x,y):dctx.lineTo(x,y); });
+  dctx.strokeStyle = opts.color;
+  dctx.lineWidth = 2*devicePixelRatio;
+  dctx.stroke();
+
+  if(splitIndex < series.length-1){
+    dctx.beginPath();
+    for(let i=splitIndex;i<series.length;i++){ const [x,y]=pt(i); i===splitIndex?dctx.moveTo(x,y):dctx.lineTo(x,y); }
+    dctx.strokeStyle = opts.color+"99";
+    dctx.setLineDash([5,4]);
+    dctx.lineWidth = 1.6*devicePixelRatio;
+    dctx.stroke();
+    dctx.setLineDash([]);
+    const [nx,ny] = pt(splitIndex);
+    dctx.strokeStyle = "rgba(128,142,150,0.35)";
+    dctx.lineWidth = 1*devicePixelRatio;
+    dctx.beginPath(); dctx.moveTo(nx,0); dctx.lineTo(nx,h); dctx.stroke();
+  }
+
+  // endpoint dot at the last observed point (not the forecast tail)
+  const [ex,ey] = pt(splitIndex);
+  dctx.beginPath();
+  dctx.arc(ex,ey,3.2*devicePixelRatio,0,Math.PI*2);
+  dctx.fillStyle=opts.color;
+  dctx.fill();
+
+  // threshold line if given
+  if(opts.threshold !== undefined){
+    const ty = h - ((opts.threshold-min)/range)*h*0.86 - h*0.06;
+    dctx.strokeStyle = "#dc2626aa";
+    dctx.setLineDash([4,3]);
+    dctx.beginPath(); dctx.moveTo(0,ty); dctx.lineTo(w,ty); dctx.stroke();
+    dctx.setLineDash([]);
+  }
+}
+
+function renderCharts(){
+  const hist = state.energyHistory;
+  if(hist.length<2) return;
+  const tempSeries = hist.map(h=>Math.max(...h.temp));
+  const powerSeries = hist.map(h=>h.power);
+  const spoilSeries = hist.map(h=>h.spoil);
+
+  const splitIndex = tempSeries.length-1;
+  const tempWithForecast = tempSeries.concat(state.forecast.map(f=>Math.max(...f.temp)));
+  drawLineChart(document.getElementById("chartTemp"), tempWithForecast, {color:"#f59e0b", min:cfg.product.target-cfg.product.band*3, max:cfg.product.target+cfg.product.band*6, splitIndex});
+  drawLineChart(document.getElementById("chartPower"), powerSeries, {color:"#22d3ee", min:0, max:16});
+  drawLineChart(document.getElementById("chartSpoil"), spoilSeries, {color:"#a78bfa", min:0, max:100, threshold:90});
+
+  document.getElementById("chartTempMin").textContent = (cfg.product.target-cfg.product.band*3).toFixed(0);
+  document.getElementById("chartTempMax").textContent = (cfg.product.target+cfg.product.band*6).toFixed(0);
+  document.getElementById("chartPowerMax").textContent = "16 kW";
+}
+
+/* ============================================================
+   RENDERING — stats / table / log
+   ============================================================ */
+
+function riskPill(v){
+  if(v<50) return `<span class="pill ok">${v.toFixed(0)}</span>`;
+  if(v<85) return `<span class="pill warn">${v.toFixed(0)}</span>`;
+  return `<span class="pill bad">${v.toFixed(0)}</span>`;
+}
+
+// A literal clock face — hour and minute hands actually sweep at simulated
+// speed, and the ring shades from day-blue to night-navy by hour, so time
+// passing is something you can see at a glance, not just read as digits.
+const clockCv = document.getElementById("clockFace");
+const clockCx = clockCv.getContext("2d");
+function drawClock(){
+  const isDark = document.documentElement.getAttribute("data-theme")==="dark" ||
+    (matchMedia("(prefers-color-scheme: dark)").matches && document.documentElement.getAttribute("data-theme")!=="light");
+  const W=88,H=88,cx=44,cy=44,r=38;
+  clockCx.clearRect(0,0,W,H);
+
+  const hourNow = (state.tMin/60)%24;
+
+  // day/night ring — sweeps a soft gradient arc: warm from ~6-18h, cool otherwise
+  const isDay = hourNow>=6 && hourNow<18;
+  clockCx.beginPath();
+  clockCx.arc(cx,cy,r,0,Math.PI*2);
+  clockCx.fillStyle = isDay ? "#0891b222" : "#1e293b33";
+  clockCx.fill();
+  clockCx.lineWidth = 3;
+  clockCx.strokeStyle = isDay ? "#f59e0b" : "#3b82f6";
+  clockCx.stroke();
+
+  // hour ticks
+  for(let i=0;i<12;i++){
+    const a = (i/12)*Math.PI*2 - Math.PI/2;
+    const x1 = cx+Math.cos(a)*(r-5), y1=cy+Math.sin(a)*(r-5);
+    const x2 = cx+Math.cos(a)*(r-1), y2=cy+Math.sin(a)*(r-1);
+    clockCx.strokeStyle = isDark?"#8ba0aa":"#55666f";
+    clockCx.lineWidth=1.4;
+    clockCx.beginPath(); clockCx.moveTo(x1,y1); clockCx.lineTo(x2,y2); clockCx.stroke();
+  }
+
+  // hour hand
+  const hourAngle = ((hourNow%12)/12)*Math.PI*2 - Math.PI/2;
+  clockCx.strokeStyle = isDark?"#e6eef1":"#14202a";
+  clockCx.lineWidth=3; clockCx.lineCap="round";
+  clockCx.beginPath(); clockCx.moveTo(cx,cy); clockCx.lineTo(cx+Math.cos(hourAngle)*r*0.5, cy+Math.sin(hourAngle)*r*0.5); clockCx.stroke();
+
+  // minute hand
+  const minuteNow = state.tMin%60;
+  const minAngle = (minuteNow/60)*Math.PI*2 - Math.PI/2;
+  clockCx.strokeStyle = "#22d3ee";
+  clockCx.lineWidth=2; clockCx.lineCap="round";
+  clockCx.beginPath(); clockCx.moveTo(cx,cy); clockCx.lineTo(cx+Math.cos(minAngle)*r*0.75, cy+Math.sin(minAngle)*r*0.75); clockCx.stroke();
+
+  // center hub
+  clockCx.fillStyle = "#22d3ee";
+  clockCx.beginPath(); clockCx.arc(cx,cy,2.6,0,Math.PI*2); clockCx.fill();
+}
+
+function dayPhaseLabel(hour){
+  if(hour>=5 && hour<12) return "Morning";
+  if(hour>=12 && hour<17) return "Afternoon";
+  if(hour>=17 && hour<20) return "Evening";
+  return "Night";
+}
+
+function renderStats(){
+  document.getElementById("stClock").textContent = fmtClock(state.tMin);
+  drawClock();
+  const {temp,hour} = ambientNow();
+  document.getElementById("stDayPhase").textContent = `${dayPhaseLabel(hour)} · Day ${state.dayCount}`;
+  document.getElementById("stAmbient").textContent = `${temp.toFixed(1)}°C`;
+  const tariff = tariffAt(Math.floor(hour));
+  const tEl = document.getElementById("stTariff");
+  tEl.textContent = `₹${tariff.toFixed(1)}/kWh`;
+  tEl.className = "v tnum " + (tariff>8.5?"bad":tariff>6?"warn":"good");
+  document.getElementById("stEnergy").textContent = `${state.energyKWhToday.toFixed(1)} kWh · ₹${state.costToday.toFixed(0)}`;
+  const maxSpoil = Math.max(...state.spoilIndex);
+  const sEl = document.getElementById("stSpoil");
+  sEl.textContent = `${maxSpoil.toFixed(0)} / 100`;
+  sEl.className = "v tnum " + (maxSpoil>85?"bad":maxSpoil>50?"warn":"good");
+
+  document.getElementById("doorState").textContent = state.doorOpen ? "DOOR OPEN — INFILTRATION" : "DOOR CLOSED";
+  document.getElementById("doorState").style.color = state.doorOpen ? "var(--warm)" : "var(--ink-dim)";
+
+  const anyDefrost = state.defrosting.some(Boolean);
+  const onCount = state.compressorOn.filter(Boolean).length;
+  if(cfg.mode==="vfd"){
+    const avgCap = state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100;
+    document.getElementById("compState").textContent = anyDefrost ? "DEFROST" : `${avgCap.toFixed(0)}% AVG CAPACITY`;
+    document.getElementById("compState").className = "pill tnum " + (anyDefrost?"warn":(avgCap>3?"ok":""));
+  } else {
+    document.getElementById("compState").textContent = anyDefrost ? "DEFROST" : (onCount>0?`${onCount}/3 RUNNING`:"OFF");
+    document.getElementById("compState").className = "pill tnum " + (anyDefrost?"warn":(onCount>0?"ok":""));
+  }
+  const duty = cfg.mode==="vfd"
+    ? state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100
+    : state.lastHourOnMinutes.reduce((sum,arr)=>sum+arr.reduce((a,b)=>a+b,0),0)/(60*N_ZONES)*100;
+  document.getElementById("dutyCycle").textContent = `${duty.toFixed(0)}%`;
+  const frostAvg = state.frost.reduce((a,b)=>a+b,0)/N_ZONES;
+  document.getElementById("copVal").textContent = (ratedCOP(cfg.product.target)*(1-Math.min(0.35,frostAvg*0.35))).toFixed(2);
+  document.getElementById("frostVal").textContent = `${(frostAvg*100).toFixed(0)}%`;
+  const remain = Math.max(0, Math.min(...state.nextDefrostAt)-state.tMin);
+  document.getElementById("nextDefrost").textContent = anyDefrost? "in progress" : `${Math.floor(remain/60)}h ${Math.floor(remain%60)}m`;
+
+  const tbody = document.querySelector("#zoneTable tbody");
+  tbody.innerHTML = ZONES.map((name,i)=>{
+    const ageHr = state.batchAgeMin[i]/60;
+    const ageTxt = ageHr<48 ? `${ageHr.toFixed(0)}h` : `${(ageHr/24).toFixed(1)}d`;
+    return `<tr>
+      <td style="font-family:ui-sans-serif,sans-serif">${name}</td>
+      <td style="color:${colorForTemp(state.airTemp[i],cfg.product.target)}">${state.airTemp[i].toFixed(1)}°C</td>
+      <td style="color:${colorForTemp(state.zoneTemp[i],cfg.product.target)}">${state.zoneTemp[i].toFixed(1)}°C</td>
+      <td>${state.zoneSensor[i].toFixed(1)}°C</td>
+      <td>${(state.zoneRH[i]*100).toFixed(0)}%</td>
+      <td>${(state.frost[i]*100).toFixed(0)}%</td>
+      <td class="tnum">${ageTxt}</td>
+      <td>${riskPill(state.spoilIndex[i])}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderLoadBreakdown(){
+  const el = document.getElementById("loadBreakdown");
+  el.innerHTML = ZONES.map((name,i)=>{
+    const L = state.zoneLoads[i];
+    const gains = { wall: Math.max(0,L.wall), door: Math.max(0,L.door), shift: Math.max(0,L.shift), stock: Math.max(0,L.stock), defrost: Math.max(0,L.defrost) };
+    const totalGain = Object.values(gains).reduce((a,b)=>a+b,0) || 1;
+    const colors = { wall:"#64748b", door:"#f59e0b", shift:"#a78bfa", stock:"#fb7185", defrost:"#f43f5e" };
+    const segs = Object.entries(gains).filter(([,w])=>w>0.5).map(([k,w])=>
+      `<div class="seg" style="width:${(w/totalGain*100).toFixed(1)}%;background:${colors[k]}"></div>`
+    ).join("");
+    const dominant = Object.entries(gains).sort((a,b)=>b[1]-a[1])[0];
+    const dominantLabel = {wall:"wall/envelope conduction", door:"door infiltration", shift:"worker heat", stock:"incoming stock", defrost:"defrost heater"}[dominant[0]];
+    const coolTxt = L.cooling>0.5
+      ? `compressor removing ${L.cooling.toFixed(0)} W — net ${(totalGain-L.cooling>=0?"+":"")}${(totalGain-L.cooling).toFixed(0)} W, ${totalGain-L.cooling>=0?"warming":"cooling"}`
+      : `compressor idle — net +${totalGain.toFixed(0)} W, warming`;
+    return `<div class="loadrow">
+      <div class="lr-head"><span>${name} — <b>${dominant[1]>1 ? dominantLabel : "steady state"}</b> dominant</span><span class="tnum">${totalGain.toFixed(0)} W in</span></div>
+      <div class="loadbar">${segs}</div>
+      <div style="font-size:10.5px;color:var(--ink-dim);margin-top:3px" class="tnum">${coolTxt}</div>
+    </div>`;
+  }).join("");
+}
+
+function fmtMin(m){ return m<60 ? `${Math.round(m)}m` : `${(m/60).toFixed(1)}h`; }
+
+function renderTracking(){
+  const el = document.getElementById("trackingPanel");
+  const rows = [];
+
+  // forklift
+  const f = state.forklift;
+  let forkTxt;
+  if(f.mission === "idle") forkTxt = `Parked at ${ZONES[f.zone]}`;
+  else if(f.mission === "working") forkTxt = `Working at ${ZONES[f.zone]} — ${fmtMin(f.dwellTimer)} left`;
+  else forkTxt = `En route ${ZONES[f.fromZone]} → ${ZONES[f.toZone]} (${(f.progress*100).toFixed(0)}%)`;
+  rows.push(`<div class="loadrow"><div class="lr-head"><span>Forklift</span><span class="tnum">${f.tripsToday} trip${f.tripsToday===1?'':'s'} today · ${f.metersToday.toFixed(0)} m</span></div><div style="font-size:11.5px;color:var(--ink-dim)">${forkTxt}</div></div>`);
+
+  // technician — find the most relevant active visit, if any
+  let techTxt = "No visit scheduled";
+  for(let i=0;i<N_ZONES;i++){
+    const v = state.maintenanceVisit[i];
+    if(!v) continue;
+    if(v.arrivedAt && !v.completed){
+      techTxt = `On site at ${ZONES[i]} — ${v.kind==="service"?"compressor service":"sensor calibration"}, ${fmtMin(v.endsAt-state.tMin)} left`;
+    } else if(!v.arrivedAt){
+      const eta = v.scheduledAt-state.tMin;
+      techTxt = eta <= TECH_TRAVEL_MIN ? `En route to ${ZONES[i]} — ETA ${fmtMin(eta)}` : `Dispatched to ${ZONES[i]} — ETA ${fmtClock(v.scheduledAt)}`;
+    } else if(v.completed){
+      techTxt = `Departing ${ZONES[i]} — job complete`;
+    }
+    break;
+  }
+  rows.push(`<div class="loadrow"><div class="lr-head"><span>Technician</span></div><div style="font-size:11.5px;color:var(--ink-dim)">${techTxt}</div></div>`);
+
+  // workers
+  const shift = currentShift((state.tMin/60)%24);
+  if(shift){
+    const roster = [];
+    for(let wi=0; wi<shift.count; wi++) roster.push(wi===0||wi===1 ? 0 : (wi===2 ? 1 : 2));
+    const counts = [0,0,0];
+    roster.forEach(z=>counts[z]++);
+    const parts = counts.map((c,i)=>c>0?`${c} at ${ZONES[i].split(" - ")[0]}`:null).filter(Boolean).join(", ");
+    rows.push(`<div class="loadrow"><div class="lr-head"><span>${shift.label}</span><span class="tnum">${shift.count} on floor</span></div><div style="font-size:11.5px;color:var(--ink-dim)">${parts}</div></div>`);
+  } else {
+    rows.push(`<div class="loadrow"><div class="lr-head"><span>Crew</span></div><div style="font-size:11.5px;color:var(--ink-dim)">Off shift — night skeleton crew only</div></div>`);
+  }
+
+  // truck / dock
+  const truckTxt = state.doorOpen ? "At dock, unloading — Zone A" : (state.truckQueue>0 ? "Queued at dock — Zone A" : `Next booked delivery: ${fmtClock(state.nextTruckAppt||0)}`);
+  rows.push(`<div class="loadrow"><div class="lr-head"><span>Delivery truck</span></div><div style="font-size:11.5px;color:var(--ink-dim)">${truckTxt}</div></div>`);
+
+  // cumulative — whole-run totals, not just today, so "how many visits, how long" has an answer
+  const c = state.cumulative;
+  const days = Math.max(0.01, state.tMin/1440);
+  rows.push(`<div class="cumgrid">
+    <div class="cumcell" data-tip="cum:forklift"><div class="cl">Forklift, run total</div><div class="cv">${c.forkliftTrips} trips · ${c.forkliftMeters.toFixed(0)} m</div></div>
+    <div class="cumcell" data-tip="cum:forkliftTime"><div class="cl">Forklift time moving</div><div class="cv">${fmtMin(c.forkliftMinutes)}</div></div>
+    <div class="cumcell" data-tip="cum:tech"><div class="cl">Technician visits</div><div class="cv">${c.technicianVisits}</div></div>
+    <div class="cumcell" data-tip="cum:techTime"><div class="cl">Technician time onsite</div><div class="cv">${fmtMin(c.technicianMinutes)}</div></div>
+    <div class="cumcell" data-tip="cum:trucks"><div class="cl">Trucks, in / out</div><div class="cv">${c.truckDeliveries} / ${c.truckOutbound}</div></div>
+    <div class="cumcell" data-tip="cum:workers"><div class="cl">Worker person-hours</div><div class="cv">${c.workerPersonHours.toFixed(0)} hrs</div></div>
+  </div>
+  <div style="font-size:10px;color:var(--ink-dim);margin-top:4px;text-align:right">since sim start · Day ${state.dayCount} (${days.toFixed(1)}d elapsed)</div>`);
+
+  el.innerHTML = rows.join("");
+}
+
+function renderLog(){
+  const el = document.getElementById("log");
+  el.innerHTML = state.log.slice(-60).reverse().map(e=>
+    `<div class="${e.alert?'alert':''}"><b>${e.t}</b> — ${e.msg}</div>`
+  ).join("");
+}
+
+function renderTwin(){
+  const tbody = document.getElementById("twinTbody");
+  tbody.innerHTML = ZONES.map((name,i)=>{
+    let status = `<span class="pill ok">nominal</span>`;
+    if(state.maintenanceFlagged[i]){
+      status = `<span class="pill bad">service due</span>`;
+    } else if(state.calibrationFlagged[i]){
+      status = `<span class="pill warn">sensor drift</span>`;
+    } else if(state.residual[i] > state.residualBaseline[i]*2.5){
+      status = `<span class="pill warn">calibrating</span>`;
+    }
+    return `<tr>
+      <td style="font-family:ui-sans-serif,sans-serif">${name}</td>
+      <td>${(state.estCapMult[i]*100).toFixed(0)}%</td>
+      <td>${(state.estUaMult[i]*100).toFixed(0)}%</td>
+      <td>${state.residual[i].toFixed(2)}°C</td>
+      <td>${status}</td>
+    </tr>`;
+  }).join("");
+
+  const list = document.getElementById("advisoryList");
+  if(state.advisories.length===0){
+    list.innerHTML = `<div class="advisory empty">No active recommendations — plant tracking calibrated model within tolerance.</div>`;
+  } else {
+    list.innerHTML = state.advisories.map(a=>`<div class="advisory ${a.level}">${a.text}</div>`).join("");
+  }
+}
+
+/* ============================================================
+   TOOLTIPS + MODAL
+   ============================================================ */
+
+const TIPS = {
+  "head:clock":   "<b>Sim clock</b>The hands actually sweep at simulated speed — orange ring = daytime, blue ring = nighttime. This clock runs much faster than your real clock (see the Sim speed slider): a full lap of the minute hand can pass in a couple of real seconds.",
+  "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve (asymmetric — sharp afternoon peak, shallow pre-dawn trough) layered on the selected season's baseline. A stand-in for a live weather feed, not a forecast.",
+  "head:tariff":  "<b>Grid tariff</b>India-style time-of-use rate (₹/kWh). Hand-authored, not pulled from a real utility schedule.",
+  "head:energy":  "<b>Energy today</b>Sum of every zone's compressor draw (kW) × time, at today's tariff. Resets at midnight sim-time.",
+  "head:spoil":   "<b>Spoilage risk</b>Highest zone's shelf-life-consumed index for its CURRENT batch, 0-100, via Arrhenius/Q10 kinetics. It climbs even at perfect temperature — refrigeration slows spoilage, it doesn't stop it — and resets on stock turnover (truck delivery / scheduled rotation), so a stagnant batch left unrotated for its full shelf life will genuinely reach 100.",
+  "door":         "<b>Dock door</b>Zone A only. Opens on truck arrival; while open, warm ambient air infiltrates and the air curtain only partially blocks it.",
+  "legend:blue":  "Zone core temperature at or below the product's target setpoint.",
+  "legend:cyan":  "Within the controller's hysteresis band around target — normal operating range.",
+  "legend:amber": "More than 4°C over target — the compressor should already be engaging.",
+  "legend:red":   "Critical excursion — spoilage risk accelerates exponentially here (Q10 kinetics).",
+  "legend:sim":   "Every visual cue reads from the physics state each frame — nothing here is a canned animation.",
+  "ctrl:mode": "<b>Controller</b>How the compressor is actually switched. Simple explanation: it's either a light switch (fully on or fully off) or a dimmer (smoothly turns up/down). Three real strategies, cheapest/most common first — hover each option.",
+  "ctrl:mode-rule": "<b>Two-position — India's default</b>A light switch, not a dimmer: the compressor is either fully ON or fully OFF around a temperature band. This is what runs the overwhelming majority of India's cold storage today — especially the thousands of single-commodity bulk potato/onion stores that make up most of the country's installed capacity. Cheap, rugged, easy for local technicians to service — which is exactly why it dominates, not because it's the most advanced option.",
+  "ctrl:mode-adaptive": "<b>Adaptive band</b>Same on/off switch as Two-position, but the facility's own SOP tightens or loosens the temperature band depending on how hard the plant is working — a real tuning practice at better-run Indian sites, not new hardware.",
+  "ctrl:mode-vfd": "<b>Variable-speed (VFD)</b>A dimmer, not a switch: capacity smoothly ramps 0-100% instead of clicking on/off. This is standard in modern integrated pack-houses, pharma cold-chain, and newer organized-retail distribution centers in India — but it's still a minority of total Indian cold storage capacity, which remains dominated by simple on/off potato-storage-style plants.",
+  "ctrl:product": "<b>Product profile</b>Sets target temp, hysteresis band, specific heat (cp, from Siebel's equation off the item's real water content), cooling time-constant (τ), Arrhenius Q10 for spoilage, and delivery/turnover logistics. Several Indian items are chilling-sensitive (tomato, banana, mango) and are deliberately targeted well above 0°C — storing them colder would injure them, not protect them.",
+  "ctrl:season":  "<b>Ambient profile</b>India's 4 practical seasons — Summer, Monsoon, Post-monsoon, Winter — each with its own base temp, day/night swing, and humidity baseline feeding every zone's wall-conduction load and the compressor's dehumidification duty.",
+  "ctrl:speed":   "<b>Sim speed</b>How many simulated minutes advance per animation frame (1–8).",
+  "ctrl:play":    "Pause or resume the simulation clock.",
+  "ctrl:truck":   "Force an unscheduled truck arrival now, on top of the normal booked dock schedule — same door/unload/turnover effects as a booked delivery.",
+  "ctrl:reset":   "Reset every zone to ambient and clear all history, logs, and frost/spoilage state.",
+  "th:air":       "<b>Air</b>Circulating chamber air temperature — the fast-moving node the compressor cools directly and the thermostat controls on. Ground truth, not what's displayed on a sensor.",
+  "th:temp":      "<b>Product core</b>The actual temperature INSIDE the stored food — changes slowly. This is what spoilage cares about, not the air temperature. See Glossary: τ.",
+  "th:sensor":    "<b>Sensor (lag)</b>What a real wall sensor would show — close to the air temp, but always a little behind and a little noisy.",
+  "th:rh":        "<b>RH</b>Relative humidity — rises toward ambient over time, falls when the compressor's coil condenses moisture.",
+  "th:frost":     "<b>Coil frost</b>Ice buildup on the evaporator coil. Grows with RH and runtime, degrades COP, resets on defrost.",
+  "th:tti":       "<b>TTI risk</b>Cumulative time-temperature-integral spoilage index (0–100) for that zone's stored product.",
+  "comp:state":   "<b>Compressor state</b>On/off modes: how many of the 3 independent chamber units are currently running. VFD mode: the average commanded capacity across all 3 (0-100%, continuous). Either way, DEFROST overrides while an evaporator is being cleared.",
+  "comp:duty":    "<b>Duty cycle</b>On/off modes: share of the last 60 sim-minutes any compressor spent running. VFD mode: current average commanded capacity fraction — there's no 'running or not' to average, only how hard it's working.",
+  "comp:cop":     "<b>COP</b>Simply: cooling out ÷ electricity in. Higher = more efficient. Drops when the coil gets icy, and is naturally lower for colder targets (deep freeze is less efficient than a chiller). See Glossary for the formula.",
+  "comp:frost":   "<b>Frost load</b>Average evaporator ice buildup across zones, 0–100%.",
+  "comp:defrost": "<b>Next defrost</b>Countdown to the next scheduled defrost cycle, staggered per zone so they don't all lose cooling at once.",
+  "chart:temp":   "Max zone core temperature over the last ~6 sim-hours, against the product's target/band. The faint dashed segment past 'now' is the twin's own forecast.",
+  "chart:power":  "How much electricity all 3 compressors are drawing right now, in kW — calculated from how much cooling they're actually delivering, not a fixed number.",
+  "chart:spoil":  "Worst zone's spoilage index over time. Dashed line marks the 90/100 discard threshold.",
+  "twin:header":  "<b>AI twin layer</b>This is the 'smart guesser' — it never gets to see the real temperature directly, only the noisy sensor reading, and has to figure everything else out from that. See Glossary: Digital twin.",
+  "twin:cap":     "<b>Estimated capacity</b>The twin's own guess of how strong each compressor really is right now — learned by watching results, not read off a spec sheet.",
+  "twin:ua":      "<b>Estimated UA</b>The twin's own guess of how leaky each chamber's walls really are — same idea as capacity, learned rather than given.",
+  "twin:residual": "<b>Residual</b>How far off the twin's guess currently is from the sensor reading. A gap that won't go away is the first sign something's genuinely wrong. See Glossary: Residual.",
+  "twin:status":  "<b>Status</b>Nominal, or a flagged anomaly with the twin's best hypothesis for its cause — equipment drift vs a sensor problem.",
+  "th:batch":     "<b>Batch age</b>Time since this zone's stock last turned over (truck delivery for Zone A, scheduled rotation for B/C). Spoilage tracks THIS batch, not the building.",
+  "loads:header": "<b>What's heating this zone up right now</b>Every source of heat currently acting on the zone, shown as a share of the total — a direct, visual answer to 'why is the temperature what it is.'",
+  "loads:wall":   "Heat conducted through the insulated envelope, proportional to (ambient − zone temp) × the envelope's UA.",
+  "loads:door":   "Warm air infiltrating through an open dock door, damped by the air curtain. Zero unless the door is open.",
+  "loads:shift":  "Sensible heat from workers on shift — small, but non-zero even when nothing else is happening.",
+  "loads:stock":  "Incoming pallets no longer show up as an air heat-rate — they're warm mass that blends directly into the PRODUCT node's temperature the moment a truck arrives (see Zone A's product-core temp jump on delivery), which is what actually produces a multi-hour pre-cool delay instead of a same-tick fudge.",
+  "loads:defrost": "Heat actively injected by the defrost heater while that zone's evaporator is defrosting.",
+  "loads:cooling": "Heat the compressor is currently removing, shown as a hatched offset against the gains — this is what's actually fighting the bar to the left of it.",
+  "tracking:header": "<b>Live tracking</b>Every position here is derived directly from a real scheduled event (a dispatched put-away, a booked delivery, a technician visit, the active shift roster) — nothing is idle background animation.",
+  "cum:forklift":  "Total one-way trips and distance the forklift has actually driven since the simulation started (9m assumed between adjacent chamber centers), across put-away and outbound jobs.",
+  "cum:forkliftTime": "Total time the forklift has spent actively driving between chambers (not counting dwell time working at a zone) since sim start.",
+  "cum:tech":      "Total number of dispatched maintenance/calibration visits that have actually arrived onsite since sim start.",
+  "cum:techTime":  "Total minutes technicians have spent actively working onsite (not counting drive-in/drive-out) since sim start.",
+  "cum:trucks":    "Total inbound deliveries received at the dock, and total outbound shipments that have departed, since sim start.",
+  "cum:workers":   "Cumulative person-hours worked on the floor — headcount integrated over time across every shift since sim start.",
+};
+
+(function initTooltips(){
+  const tipEl = document.getElementById("tooltip");
+  let current = null;
+  function show(target, key){
+    const html = TIPS[key];
+    if(!html) return;
+    tipEl.innerHTML = html;
+    current = target;
+    position(target);
+    tipEl.classList.add("show");
+  }
+  function position(target){
+    const r = target.getBoundingClientRect();
+    const tw = tipEl.offsetWidth || 220;
+    let x = r.left + r.width/2 - tw/2;
+    x = Math.max(8, Math.min(x, window.innerWidth-tw-8));
+    let y = r.top - tipEl.offsetHeight - 10;
+    if(y<8) y = r.bottom + 10;
+    tipEl.style.left = x+"px";
+    tipEl.style.top = y+"px";
+  }
+  function hide(){ tipEl.classList.remove("show"); current=null; }
+
+  document.addEventListener("pointerover", e=>{
+    const el = e.target.closest("[data-tip]");
+    if(el) show(el, el.dataset.tip);
+  });
+  document.addEventListener("pointerout", e=>{
+    const el = e.target.closest("[data-tip]");
+    if(el && el===current) hide();
+  });
+  document.addEventListener("focusin", e=>{
+    const el = e.target.closest("[data-tip]");
+    if(el) show(el, el.dataset.tip);
+  });
+  document.addEventListener("focusout", e=>{
+    const el = e.target.closest("[data-tip]");
+    if(el && el===current) hide();
+  });
+  window.addEventListener("scroll", ()=>{ if(current) position(current); }, true);
+})();
+
+(function initModal(){
+  const overlay = document.getElementById("modalOverlay");
+  document.getElementById("dtBadge").addEventListener("click", ()=> overlay.classList.add("open"));
+  document.getElementById("modalClose").addEventListener("click", ()=> overlay.classList.remove("open"));
+  overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") overlay.classList.remove("open"); });
+})();
+
+const CATEGORY_LABEL = {
+  dock:"Dock / delivery", logistics:"Logistics", defrost:"Defrost",
+  maintenance:"Maintenance", shift:"Shift change", alert:"Alert", config:"Config",
+};
+
+function populateEventsDaySelect(){
+  const sel = document.getElementById("eventsDaySel");
+  const maxDay = state.dayCount;
+  const prevVal = sel.value;
+  const opts = [];
+  for(let d=1; d<=maxDay; d++) opts.push(`<option value="${d}">Day ${d}</option>`);
+  sel.innerHTML = opts.join("");
+  sel.value = opts.find(o=>o.includes(`value="${prevVal}"`)) ? prevVal : String(maxDay);
+}
+
+function renderEvents(){
+  const daySel = document.getElementById("eventsDaySel");
+  const catSel = document.getElementById("eventsCatSel");
+  if(daySel.options.length !== state.dayCount) populateEventsDaySelect();
+
+  const day = +daySel.value || state.dayCount;
+  const cat = catSel.value;
+  const rows = state.events.filter(e => e.day===day && (cat==="all" || e.category===cat))
+    .sort((a,b)=>a.tStart-b.tStart);
+
+  document.getElementById("eventsCount").textContent = `${rows.length} event${rows.length===1?'':'s'}`;
+  const tbody = document.getElementById("eventsTbody");
+  const empty = document.getElementById("eventsEmpty");
+
+  if(rows.length===0){
+    tbody.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  const pendingSet = new Set(Object.values(state.pendingEvents));
+  tbody.innerHTML = rows.map(e=>{
+    const dur = eventDurationMin(e);
+    const durTxt = dur!==null ? fmtMin(dur) : (pendingSet.has(e) ? "ongoing" : "—");
+    return `<tr class="${e.alert?'alertrow':''}">
+      <td class="tnum">${fmtClock(e.tStart).split("· ")[1]}</td>
+      <td class="evname">${e.name}</td>
+      <td><span class="evcat">${CATEGORY_LABEL[e.category]||e.category}</span></td>
+      <td>${e.zone!==null ? ZONES[e.zone].split(" - ")[0] : "—"}</td>
+      <td class="tnum">${durTxt}</td>
+      <td class="evspec">${e.spec||""}</td>
+    </tr>`;
+  }).join("");
+}
+
+(function initEventsModal(){
+  const overlay = document.getElementById("eventsModalOverlay");
+  document.getElementById("eventsBadge").addEventListener("click", ()=>{
+    populateEventsDaySelect();
+    renderEvents();
+    overlay.classList.add("open");
+  });
+  document.getElementById("eventsModalClose").addEventListener("click", ()=> overlay.classList.remove("open"));
+  overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") overlay.classList.remove("open"); });
+  document.getElementById("eventsDaySel").addEventListener("change", renderEvents);
+  document.getElementById("eventsCatSel").addEventListener("change", renderEvents);
+})();
+
+/* ============================================================
+   GLOSSARY — every term on the page, in plain language, with a real
+   number from this run, the formula behind it, and how it differs
+   from a real facility. This is the depth the tooltips deliberately
+   keep short.
+   ============================================================ */
+
+const GLOSSARY = [
+  { term:"Digital twin", simple:"A computer copy of a real place that tries to guess the real place's condition using only the same limited readings a real monitoring system would have — not by cheating and looking at the real thing directly.", example:"The whole right-hand 'AI twin layer' panel: it only ever sees the noisy Telemetry column, never the true Product core temperature.", eq:"—", diff:"Here, BOTH sides (the 'real' building and the 'twin') are simulated. In an actual deployment only the twin side is software — the other side is a physical building." },
+  { term:"Telemetry", simple:"The actual numbers a sensor sends over the network — a little noisy, a little delayed, sometimes missing.", example:"The 'Sensor (lag)' column in Zone telemetry; occasionally freezes for a few ticks (a dropped reading).", eq:"reading = true value + drift + random noise", diff:"Real telemetry can also fail in messier ways — wrong units, corrupted packets, a sensor unplugged entirely." },
+  { term:"Sensor drift / calibration drift", simple:"A sensor slowly starts reading a little high or low over weeks or months, the way a cheap kitchen thermometer drifts.", example:"'Sensor calibration' events in the Events tab, and the technician's calibration visits.", eq:"bias(t) = bias(t-1) + small random step", diff:"Real drift also depends on humidity, vibration, and the specific sensor model — this uses one generic random-walk rate for all sensors." },
+  { term:"Residual", simple:"The gap between what the twin's own guess says and what the sensor says. A big, stubborn gap means something's actually wrong.", example:"'Residual' column in the AI twin layer table, in °C.", eq:"residual = |twin's guess − sensor reading|", diff:"Real systems track the statistical uncertainty of this gap too (how confident to be), not just its size." },
+  { term:"State estimator", simple:"The part of the twin that keeps correcting its own guess to match incoming sensor readings, a little at a time.", example:"stepTwinEstimator() — nudges the twin's guessed temperature and guessed compressor strength every tick.", eq:"guess += (reading − guess) × correction strength", diff:"Real industrial versions (Kalman filters) also track how confident each guess is, and weight corrections accordingly." },
+  { term:"COP (Coefficient of Performance)", simple:"How much cooling you get per unit of electricity. Bigger number = more efficient compressor.", example:"'COP (efficiency)' stat, ~2-4 depending on target temperature.", eq:"COP = cooling delivered ÷ electricity used", diff:"Real COP also depends on outdoor temperature, refrigerant type, and load — this uses one simplified formula based only on target temperature and frost." },
+  { term:"UA (envelope conductance)", simple:"How fast heat leaks through a chamber's insulated walls. Bigger UA = leakier walls.", example:"Used inside the 'wall/envelope' share of the heat-load breakdown chart.", eq:"heat leaking in (Watts) = UA × (outside temp − inside temp)", diff:"Real UA varies by wall condition, door seals, and age — here it's one fixed number per chamber based on assumed insulation." },
+  { term:"Thermal mass / capacitance", simple:"How much heat something can 'soak up' before its temperature actually changes. A tank of water heats up slower than an empty tin can.", example:"Why product core temperature changes slowly (large mass) while air temperature swings fast (small mass).", eq:"temperature change = heat added ÷ thermal mass", diff:"Real thermal mass also depends on packaging and how densely stock is packed — simplified here to just item mass × its cp." },
+  { term:"τ (tau, time constant)", simple:"Roughly how long a stored item takes to catch up to the surrounding air temperature — a slow item has a big τ.", example:"Frozen meat τ=55h (very slow); tomato τ=9h (much faster).", eq:"after 1×τ, ~63% of the gap has closed; after 3×τ, ~95% has closed", diff:"Real τ depends on how the item is packed (loose vs. boxed vs. palletized), not just the item itself." },
+  { term:"Q10 / Arrhenius spoilage kinetics", simple:"A rule of thumb: for every roughly 5-10°C a food gets warmer than its ideal storage temp, it spoils noticeably faster — often twice as fast.", example:"Tomato has a high Q10 (2.8) — it punishes warm excursions hard; potato's Q10 (1.9) is more forgiving.", eq:"spoilage speed multiplier = Q10 ^ (degrees over target ÷ 5)", diff:"Real spoilage is caused by specific microbes/enzymes with their own curves — this uses one general-purpose formula for every item." },
+  { term:"TTI / Spoilage index", simple:"A running score, 0 to 100, of how much of an item's shelf life has been 'used up' by however warm it's been.", example:"'Shelf-life used' column — resets partially whenever fresh stock arrives or old stock ships out.", eq:"index += (100 ÷ shelf-life minutes) × Q10 multiplier, each minute", diff:"Real cold chains also track physical damage (bruising, moisture loss) that a pure temperature-history score can't see." },
+  { term:"PI controller", simple:"A smart dimmer: it looks at how far off temperature is right now (Proportional) AND how long it's been off (Integral) to decide how hard to run the compressor.", example:"Variable-speed (VFD) controller mode.", eq:"compressor output = (error × Kp) + (running total of past error × Ki)", diff:"Real industrial PI/PID loops are tuned per-site by an engineer; this uses one fixed generic tuning." },
+  { term:"VFD (variable-frequency drive)", simple:"Compressor hardware that can run at any speed, not just full-on or full-off — like a car's accelerator instead of a light switch.", example:"'Variable-speed (VFD)' controller option — capacity fraction shown per zone.", eq:"electricity used ≈ proportional to cooling delivered", diff:"Real VFDs have their own efficiency curve (not perfectly linear) and a minimum speed they can't go below." },
+  { term:"Two-position (on/off) control", simple:"A light switch: compressor is either fully on or fully off, with a small buffer zone so it doesn't flicker.", example:"Default controller mode — matches most Indian cold storage today.", eq:"turn ON if temp > target+band; turn OFF if temp < target−(0.3×band)", diff:"Real on/off systems also have minimum run/rest timers to protect the compressor motor, which this simplifies away." },
+  { term:"Adaptive band", simple:"Same on/off switch, but the buffer zone auto-tightens when the plant's working hard, and loosens when it's coasting.", example:"'Adaptive band' controller mode.", eq:"band = base band × 0.7 (if busy) or × 1.25 (if idle)", diff:"Real adaptive tuning is usually done manually by a technician reviewing trends, not a live automatic formula." },
+  { term:"Duty cycle", simple:"What fraction of the last hour the compressor actually spent running.", example:"'Duty cycle (last hour)' stat.", eq:"duty cycle = minutes running ÷ 60", diff:"Same concept in real life, usually logged by the compressor's own controller." },
+  { term:"Defrost cycle", simple:"A scheduled pause where a heater melts the ice that built up on the cold coil, so it can keep working efficiently.", example:"'Scheduled defrost' events — ~18 minutes, staggered per chamber.", eq:"—", diff:"Real defrost can also be triggered by a frost sensor instead of a fixed schedule, and some systems use hot-gas defrost instead of an electric heater." },
+  { term:"Frost / coil fouling", simple:"Ice buildup on the cold coil that makes the compressor work harder for the same cooling.", example:"'Coil frost' column and 'Evaporator frost load' stat.", eq:"frost builds up faster when humidity is higher and the compressor runs longer", diff:"Real frost also depends on airflow design and how often the door opens — simplified here to humidity + runtime only." },
+  { term:"Air curtain", simple:"A wall of blown air across a doorway that blocks some of the warm outside air from rushing in when the door is open.", example:"Cuts about 55% of the raw heat that would otherwise leak in through Zone A's open door.", eq:"actual leak = raw leak × (1 − curtain effectiveness)", diff:"Real air curtains lose effectiveness in high wind or if poorly aligned — this uses one fixed effectiveness number." },
+  { term:"Infiltration", simple:"Warm outside air sneaking into a cold room, mostly through an open door.", example:"'Door infiltration' slice of the heat-load breakdown chart.", eq:"heat gained ≈ door size × air speed × (outside temp − inside temp)", diff:"Real infiltration also depends on wind, stack effect (hot air rising), and exact door geometry." },
+  { term:"Put-away", simple:"Moving newly delivered goods off the loading dock and into proper storage racks.", example:"Forklift 'Put-away' trips — frozen goods go to deep freeze, everything else to bulk racks.", eq:"—", diff:"Real put-away also involves barcode scanning, exact rack-slot assignment, and quality inspection." },
+  { term:"Outbound / FIFO", simple:"Shipping out the OLDEST stock first (First In, First Out) so nothing sits around past its useful life.", example:"'Outbound pick' events — pulls from whichever zone's rotation is due.", eq:"—", diff:"Real FIFO is enforced with batch/lot tracking software; this sim approximates it by just reducing the average batch age." },
+  { term:"Shift roster", simple:"Which workers are on the clock right now, and how many.", example:"Morning shift (7am-3pm, 4 people), Evening shift (3pm-9pm, 3 people), nobody overnight.", eq:"—", diff:"Real rosters vary day to day and include named individuals, leave, and overtime — this uses one fixed repeating pattern." },
+  { term:"Dock appointment / booking", simple:"A pre-agreed time slot for a delivery truck to arrive, so trucks don't all show up at once.", example:"'Dock book set for Day N' log entries — spacing depends on the chosen product's delivery frequency.", eq:"next appointment ≈ last appointment + product's typical delivery gap", diff:"Real booking systems let suppliers pick slots and handle no-shows/reschedules — this always books the next slot automatically." },
+  { term:"Batch age", simple:"How long the stock currently sitting in a zone has been there since it was last refreshed by a delivery or shipment.", example:"'Batch age' column in Zone telemetry.", eq:"—", diff:"Real batches often have mixed ages (some old, some new stock side by side) — this tracks one blended average age per zone." },
+  { term:"Capacity fraction", simple:"How hard the compressor is currently working, from 0% (off) to 100% (flat out).", example:"Shown in VFD mode as '% AVG CAPACITY'; always 0% or 100% in on/off modes.", eq:"—", diff:"Real compressors often can't go below a minimum useful speed (e.g. 30%), which this simplifies away." },
+  { term:"Chilling injury", simple:"Damage some fruits/vegetables suffer when stored TOO cold — not just too warm. Cold hurts them too.", example:"Why tomato, banana, and mango are deliberately kept at 12-14°C instead of near 0°C.", eq:"—", diff:"Real chilling injury also depends on ripeness stage and variety — this sim uses one fixed safe target per item." },
+  { term:"Specific heat (cp) / Siebel's equation", simple:"How much energy it takes to change 1kg of something by 1°C. Watery foods need more energy to cool than dry ones.", example:"Onion (89% water) has cp≈3.8; frozen meat has cp≈2.0.", eq:"cp ≈ 4.19 × water fraction + 1.55 × (1 − water fraction)", diff:"Real cp also changes slightly with temperature and whether the item is fresh, dried, or frozen — this uses one fixed value per item." },
+  { term:"Time-of-use (ToU) tariff", simple:"Electricity that costs more at certain hours of the day (peak demand) and less at others (off-peak, usually overnight).", example:"'Grid Tariff' stat — cheapest 12am-6am, priciest 6pm-10pm, India-style.", eq:"—", diff:"Real tariffs vary by state, utility, and season, and often include additional demand charges this sim doesn't model." },
+  { term:"Forecast (twin projection)", simple:"The twin's best guess of what temperature is coming next, based on its own current understanding of the building.", example:"The dashed line past 'now' on the Zone temperature chart.", eq:"—", diff:"Real forecasts also factor in tomorrow's actual weather forecast — this assumes today's ambient conditions hold steady." },
+  { term:"Advisory layer", simple:"A simple rule-checker that turns the twin's numbers into plain-English suggestions.", example:"The 'AI twin layer' recommendation cards, e.g. 'schedule an early defrost.'", eq:"—", diff:"A real AI system would replace these fixed rules with a model trained on real outcomes." },
+  { term:"Anomaly detection", simple:"Noticing a genuine, ongoing problem — as opposed to just one noisy reading — and figuring out roughly what kind of problem it is.", example:"'Service due' / 'Sensor drift' status pills in the AI twin layer table.", eq:"—", diff:"Real anomaly detection also uses historical patterns and can spot problems this sim's simple thresholds would miss." },
+  { term:"Wear / degradation curve", simple:"Equipment doesn't fail suddenly — it slowly loses a little performance the more hours it runs, like a car's brake pads wearing down.", example:"Compressor capacity falling ~10% over ~16,000 running hours.", eq:"true capacity = 1 − (hours run × wear rate)", diff:"Real wear also accelerates with poor maintenance, extreme loads, or manufacturing defects — this uses one steady rate for everything." },
+  { term:"Diurnal curve (day/night ambient)", simple:"How outdoor temperature naturally rises through the day and falls at night.", example:"Ambient stat and the day/night ring on the Sim Clock — warm-colored by day, cool by night.", eq:"temp ≈ season's average + swing × (time-of-day wave)", diff:"Real daily temperature isn't a smooth wave — clouds, rain, and wind cause real bumps this simplified curve skips." },
+];
+
+function renderGlossary(filter){
+  const q = (filter||"").trim().toLowerCase();
+  const rows = GLOSSARY.filter(g => !q || g.term.toLowerCase().includes(q) || g.simple.toLowerCase().includes(q));
+  const tbody = document.getElementById("glossaryTbody");
+  const empty = document.getElementById("glossaryEmpty");
+  if(rows.length===0){
+    tbody.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  tbody.innerHTML = rows.map(g=>`<tr>
+    <td class="gterm">${g.term}</td>
+    <td>${g.simple}</td>
+    <td>${g.example}</td>
+    <td class="geq">${g.eq}</td>
+    <td class="gdiff">${g.diff}</td>
+  </tr>`).join("");
+}
+
+(function initGlossaryModal(){
+  const overlay = document.getElementById("glossaryModalOverlay");
+  document.getElementById("glossaryBadge").addEventListener("click", ()=>{
+    renderGlossary(document.getElementById("glossarySearch").value);
+    overlay.classList.add("open");
+  });
+  document.getElementById("glossaryModalClose").addEventListener("click", ()=> overlay.classList.remove("open"));
+  overlay.addEventListener("click", e=>{ if(e.target===overlay) overlay.classList.remove("open"); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") overlay.classList.remove("open"); });
+  document.getElementById("glossarySearch").addEventListener("input", e=> renderGlossary(e.target.value));
+})();
+
+/* ============================================================
+   LOOP + WIRING
+   ============================================================ */
+
+function setup(){
+  state = freshState();
+  cfg = { product: PRODUCTS.produce, season: "summer", mode: "rule" };
+  logEvent("Simulation initialized — chambers at ambient, compressor idle", false);
+  logEvent("Twin estimator online — calibrating capacity/UA against synthetic telemetry", false);
+}
+
+// ---- Public data/control surface for an external AI system to build against.
+// This is the actual integration seam: swap stepTelemetry()'s synthetic generator
+// for a real feed and everything from here up (estimator, forecast, advisories)
+// keeps working unchanged.
+window.ReeferTwin = {
+  getState(){
+    return {
+      simMinute: state.tMin,
+      zones: ZONES.map((name,i)=>({
+        name,
+        target: cfg.product.target,
+        telemetryC: state.telemetry[i],
+        telemetryStaleMin: state.telemetryStale[i],
+        twinAirEstimateC: state.twinPredTemp[i],
+        twinProductEstimateC: state.twinProductTemp[i],
+        estimatedCapacityPct: state.estCapMult[i]*100,
+        estimatedUaPct: state.estUaMult[i]*100,
+        residualC: state.residual[i],
+        compressorOn: state.compressorOn[i],
+        defrosting: state.defrosting[i],
+        frostPct: state.frost[i]*100,
+        relativeHumidityPct: state.zoneRH[i]*100,
+        spoilageIndex: state.spoilIndex[i],
+        batchAgeHours: state.batchAgeMin[i]/60,
+        anomaly: state.maintenanceFlagged[i] ? "capacity_drift" : (state.calibrationFlagged[i] ? "sensor_drift" : null),
+      })),
+      totalPowerKW: currentPowerKW(),
+      energyTodayKWh: state.energyKWhToday,
+      costTodayINR: state.costToday,
+      tariffPerKWh: tariffAt(Math.floor((state.tMin/60)%24)),
+      controllerMode: cfg.mode,
+      product: cfg.product.name,
+      forklift: { zone: state.forklift.zone, mission: state.forklift.mission, jobLabel: state.forklift.jobLabel },
+      cumulative: { ...state.cumulative },
+    };
+  },
+  getForecast(){ return state.forecast; },
+  getAdvisories(){ return state.advisories; },
+  getProducts(){ return Object.keys(PRODUCTS).map(k=>({ key:k, ...PRODUCTS[k] })); },
+  setProductProfile(key){ if(PRODUCTS[key]){ cfg.product = PRODUCTS[key]; document.getElementById("productSel").value = key; } },
+  setControllerMode(mode){ if(mode==="rule"||mode==="adaptive"||mode==="vfd"){ cfg.mode = mode; } },
+  triggerTruckArrival(){ state.truckQueue++; openDoor(16, "Inbound delivery (API-triggered)"); },
+};
+
+function frame(){
+  if(running){
+    for(let i=0;i<speed;i++) tick(1); // 1 sim-minute per micro-step
+  }
+  drawWarehouse();
+  renderCharts();
+  renderStats();
+  renderTwin();
+  renderLoadBreakdown();
+  renderTracking();
+  if(document.getElementById("eventsModalOverlay").classList.contains("open")) renderEvents();
+  requestAnimationFrame(frame);
+}
+
+document.getElementById("ctrlMode").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#ctrlMode button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");
+  cfg.mode = b.dataset.mode;
+  logEvent(`Controller switched to ${b.textContent}`, false);
+  pushEvent({ category:"config", name:"Controller mode changed", spec: b.textContent });
+});
+
+document.getElementById("productSel").addEventListener("change", e=>{
+  cfg.product = PRODUCTS[e.target.value];
+  scheduleNextTruckAppt(state.tMin); // new product => new delivery cadence => re-book the dock
+  logEvent(`Product profile changed to ${cfg.product.name} — target ${cfg.product.target}°C, dock re-booked to ~${cfg.product.deliveryIntervalHr}h delivery cadence`, false);
+  if(cfg.product.note) logEvent(cfg.product.note, false);
+  pushEvent({ category:"config", name:"Product profile changed", spec:`${cfg.product.name} — target ${cfg.product.target}°C` });
+});
+
+document.getElementById("seasonSel").addEventListener("change", e=>{
+  cfg.season = e.target.value;
+  logEvent(`Ambient profile switched to ${e.target.selectedOptions[0].textContent}`, false);
+  pushEvent({ category:"config", name:"Ambient profile changed", spec: e.target.selectedOptions[0].textContent });
+});
+
+document.getElementById("speedRange").addEventListener("input", e=>{ speed = +e.target.value; });
+
+document.getElementById("playBtn").addEventListener("click", e=>{
+  running = !running;
+  e.target.textContent = running?"Pause":"Resume";
+});
+
+document.getElementById("truckBtn").addEventListener("click", ()=>{
+  state.truckQueue++;
+  openDoor(16, "Inbound delivery (manual)");
+  logEvent("Manual truck arrival triggered at dock", false);
+});
+
+document.getElementById("resetBtn").addEventListener("click", ()=>{
+  setup();
+});
+
+setup();
+requestAnimationFrame(frame);
+
+})();
+</script>
