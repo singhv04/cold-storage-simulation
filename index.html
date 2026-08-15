@@ -718,6 +718,8 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
       <li>Spoilage is estimated with one general formula (temperature too high, for too long, spoils food faster) rather than a formula specific to each exact product tested in a lab.</li>
       <li>The "guessing" logic (Step 3 above) is a simplified version of what real industrial software uses (called a Kalman filter) — it works and settles on the right answer, but it isn't the mathematically optimal version.</li>
       <li>Random events (which day a truck shows up, how noisy a sensor reading is) aren't reproducible — running the simulation twice won't give identical results.</li>
+      <li>Cooling and dehumidifying aren't properly split: a real compressor spends part of its cooling power just condensing moisture out of the air (this takes real energy — it's not free), which should mean slightly less power left over to actually drop the temperature. Here, humidity is tracked as its own separate number and doesn't borrow any capacity from the temperature calculation — so on a very humid day, this sim is a little more optimistic about cooling power than a real system would be.</li>
+      <li>A frosted coil is penalized twice — once as less cooling actually delivered, and again as worse electricity-to-cooling efficiency. Both effects are real and independently documented in refrigeration engineering, but applying both at once means a badly frosted coil is modeled as somewhat worse than most single real-world measurements of frost's impact — a deliberately conservative (not an accidental) choice.</li>
     </ul>
 
     <div class="twocol">
@@ -1096,16 +1098,20 @@ function fmtClock(tMin){
 // India-tuned ambient generator: season sets the daily average/swing/humidity
 // baseline (Summer/Monsoon/Post-monsoon/Winter, picked from the Season control);
 // hour-of-day drives a two-harmonic diurnal curve, not a plain sine — the
-// afternoon peak is sharper and the overnight trough shallower, which matches
-// typical Indian daily temperature records (ground keeps re-radiating heat
-// well after solar peak) better than a symmetric curve. Minimum lands
-// pre-dawn (~5-6am), maximum mid-to-late afternoon (~3-4pm).
+// afternoon peak is sharper than the overnight trough, closer to typical
+// Indian daily temperature records than a symmetric curve would be.
+// f(x) = sin(x) + 0.25*sin(2x-pi/2), with s=sin(x), reduces to the quadratic
+// 0.5*s^2 + s - 0.25 (since sin(2x-pi/2) = 2s^2-1) — solving it exactly gives
+// max=+1.25 at s=+1 (hour 15, 3pm) and min=-0.75 at s=-1 (hour 3, 3am), NOT a
+// symmetric +-1: subtracting the midpoint (0.25) — not dividing by the peak
+// (1.25) — is what correctly rescales this to exactly +-1, so the configured
+// `swing` is actually reached at both the peak AND the trough.
 function ambientNow(){
   const s = SEASONS[cfg.season];
   const hour = (state.tMin/60) % 24;
   const phase = ((hour-9)/24)*2*Math.PI;
-  const diurnal = Math.sin(phase) + 0.25*Math.sin(2*phase - Math.PI/2); // asymmetric: sharper rise, slower decay
-  const temp = s.base + s.swing*diurnal/1.25; // /1.25 keeps peak-to-trough amplitude matching `swing`
+  const diurnal = Math.sin(phase) + 0.25*Math.sin(2*phase - Math.PI/2); // asymmetric: sharper afternoon peak
+  const temp = s.base + s.swing*(diurnal - 0.25); // exact analytic recentering, see derivation above
   const rh = Math.min(0.98, Math.max(0.15, s.rhBase + s.rhSwing*Math.sin(((hour-4)/24)*2*Math.PI)));
   return {temp, rh, hour};
 }
@@ -2428,7 +2434,7 @@ function renderTwin(){
 
 const TIPS = {
   "head:clock":   "<b>Sim clock</b>The hands actually sweep at simulated speed — orange ring = daytime, blue ring = nighttime. This clock runs much faster than your real clock (see the Sim speed slider): a full lap of the minute hand can pass in a couple of real seconds.",
-  "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve (asymmetric — sharp afternoon peak, shallow pre-dawn trough) layered on the selected season's baseline. A stand-in for a live weather feed, not a forecast.",
+  "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
   "head:tariff":  "<b>Grid tariff</b>India-style time-of-use rate (₹/kWh). Hand-authored, not pulled from a real utility schedule.",
   "head:energy":  "<b>Energy today</b>Sum of every zone's compressor draw (kW) × time, at today's tariff. Resets at midnight sim-time.",
   "head:spoil":   "<b>Spoilage risk</b>Highest zone's shelf-life-consumed index for its CURRENT batch, 0-100, via Arrhenius/Q10 kinetics. It climbs even at perfect temperature — refrigeration slows spoilage, it doesn't stop it — and resets on stock turnover (truck delivery / scheduled rotation), so a stagnant batch left unrotated for its full shelf life will genuinely reach 100.",
