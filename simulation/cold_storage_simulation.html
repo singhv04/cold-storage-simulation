@@ -1,4 +1,4 @@
-<title>Reefer Bay</title>
+<title>Cold Storage Simulation</title>
 <style>
 :root{
   --bg: #eef1f2;
@@ -472,7 +472,7 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
       <path d="M17 6 L17 28 M8 10.5 L26 23.5 M26 10.5 L8 23.5" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
     </svg>
     <div>
-      <h1>Reefer Bay</h1>
+      <h1>Cold Storage Simulation</h1>
       <div class="sub">Cold storage physics simulator — control room view</div>
     </div>
     <button class="dt-badge events-badge" id="eventsBadge" type="button">
@@ -682,7 +682,7 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
 </div>
 
 <div class="footnote">
-  <b>What's modeled physically:</b> a per-zone <b>W/kJ energy balance</b> (envelope UA × ΔT, doorway infiltration, shift heat, defrost heater load, minus compressor cooling capacity ÷ COP) integrated against each chamber's real air + product thermal mass — not arbitrary °C/min constants. On top of that sits a closed <b>twin loop</b>: synthetic noisy/lossy telemetry, an online estimator that recalibrates capacity and UA against it, anomaly detection that tells equipment drift apart from sensor faults, a rolling forecast from the calibrated model, and a <code>window.ReeferTwin</code> API for an external AI/optimization layer to read state and issue commands. Click the <b>Events</b> badge for a day-by-day, filterable log of every delivery, put-away, outbound shipment, defrost cycle, maintenance visit, shift change, and alert — each with its real start time and, where applicable, measured duration. Click the other badge for the digital-twin design breakdown.
+  <b>What's modeled physically:</b> a per-zone <b>W/kJ energy balance</b> (envelope UA × ΔT, doorway infiltration, shift heat, defrost heater load, minus compressor cooling capacity ÷ COP) integrated against each chamber's real air + product thermal mass — not arbitrary °C/min constants. On top of that sits a closed <b>twin loop</b>: synthetic noisy/lossy telemetry, an online estimator that recalibrates capacity and UA against it, anomaly detection that tells equipment drift apart from sensor faults, a rolling forecast from the calibrated model, and a <code>window.ColdStorageTwin</code> API for an external AI/optimization layer to read state and issue commands. Click the <b>Events</b> badge for a day-by-day, filterable log of every delivery, put-away, outbound shipment, defrost cycle, maintenance visit, shift change, and alert — each with its real start time and, where applicable, measured duration. Click the other badge for the digital-twin design breakdown.
 </div>
 
 </div>
@@ -708,7 +708,7 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
       <li><b>Step 4 — deciding what's wrong, not just that something's wrong.</b> If the smart layer's guess keeps disagreeing with the sensor no matter how much it adjusts, it tries to figure out <i>why</i>: has the compressor genuinely gotten weaker (equipment wearing out), or is the sensor itself lying (a calibration problem)? It only raises a flag once it's fairly confident which one it is — not on every single noisy reading.</li>
       <li><b>Step 5 — looking ahead.</b> Every so often, the smart layer runs its own guessed version of the building forward in time to predict what's about to happen over the next 3 hours — that's the dashed line on the temperature chart.</li>
       <li><b>Step 6 — giving advice.</b> A simple rule-checker looks at all of the above and writes plain-English suggestions ("defrost early," "book a service visit," "pre-cool before the price goes up"). This is deliberately the easiest part to replace with a real AI model later — it already has clean, structured data to read from.</li>
-      <li><b>Step 7 — a door for other programs.</b> Everything the smart layer believes is available through <code>window.ReeferTwin</code> in your browser's console — so another program (or a real AI agent) can read the current state, read the forecast, read the advice, and even trigger events, without touching any of the internal code.</li>
+      <li><b>Step 7 — a door for other programs.</b> Everything the smart layer believes is available through <code>window.ColdStorageTwin</code> in your browser's console — so another program (or a real AI agent) can read the current state, read the forecast, read the advice, and even trigger events, without touching any of the internal code.</li>
     </ul>
 
     <h3>What's still a shortcut (said plainly)</h3>
@@ -725,7 +725,7 @@ table.glossaryTable td.gdiff{ color:var(--ink-dim); font-size:11.5px; }
         <h3>What's genuinely good about it</h3>
         <ul>
           <li>The smart layer actually has to earn its beliefs from noisy data — it isn't secretly told the answer.</li>
-          <li>There's a real, working "plug" (<code>window.ReeferTwin</code>) another program can connect to today.</li>
+          <li>There's a real, working "plug" (<code>window.ColdStorageTwin</code>) another program can connect to today.</li>
           <li>When something looks wrong, it tries to explain <i>why</i>, not just sound an alarm.</li>
         </ul>
       </div>
@@ -2684,7 +2684,7 @@ function setup(){
 // This is the actual integration seam: swap stepTelemetry()'s synthetic generator
 // for a real feed and everything from here up (estimator, forecast, advisories)
 // keeps working unchanged.
-window.ReeferTwin = {
+window.ColdStorageTwin = {
   getState(){
     return {
       simMinute: state.tMin,
