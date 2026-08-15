@@ -104,14 +104,56 @@ header.top{
   cursor:help;
 }
 .clockface{ flex:none; display:block; }
-.hstat-click{ cursor:pointer; border-radius:6px; transition:background .12s ease; padding:2px 6px; margin:-2px -6px; }
-.hstat-click:hover{ background:var(--panel-2); }
 .hstat{ text-align:right; }
 .hstat .l{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-dim); }
 .hstat .v{ font-size:19px; font-weight:700; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 .hstat .v.warn{ color:var(--warm); }
 .hstat .v.bad{ color:var(--bad); }
 .hstat .v.good{ color:var(--good); }
+
+/* Hover-only stats: a dotted underline on the LABEL signals "info on hover"
+   without implying it's clickable. */
+.hstat[data-tip]:not(.hstat-click) .l{
+  border-bottom:1px dotted var(--ink-dim);
+  cursor:help;
+}
+
+/* Clickable stats: look like a real chip/button at rest, not just on hover —
+   persistent border + tinted background + an explicit "View breakdown" hint
+   with an icon, so clickability doesn't depend on noticing a hover state. */
+.hstat-click{
+  cursor:pointer;
+  border-radius:8px;
+  padding:6px 12px;
+  border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background:color-mix(in srgb, var(--accent) 8%, transparent);
+  transition:background .12s ease, border-color .12s ease, transform .12s ease;
+}
+.hstat-click:hover{ background:color-mix(in srgb, var(--accent) 16%, transparent); border-color:var(--accent); }
+.hstat-click:active{ transform:scale(0.98); }
+.hstat-click .clickHint{
+  display:flex; align-items:center; justify-content:flex-end; gap:4px;
+  font-size:9.5px; color:var(--accent); text-transform:uppercase; letter-spacing:0.03em;
+  margin-top:3px; font-weight:700;
+}
+.hstat-click .clickHint svg{ width:11px; height:11px; }
+
+/* Live tariff-period tag under the Grid Tariff number — makes "this changes
+   by time of day" visible without needing to hover at all. */
+.periodTag{
+  display:flex; align-items:center; justify-content:flex-end; gap:5px;
+  font-size:10.5px; color:var(--ink-dim); margin-top:2px; font-weight:600;
+}
+.periodTag i{ width:7px; height:7px; border-radius:99px; display:inline-block; flex:none; }
+
+.uxLegend{
+  display:flex; gap:16px; flex-wrap:wrap; margin-top:10px;
+  font-size:10.5px; color:var(--ink-dim);
+}
+.uxLegend span{ display:inline-flex; align-items:center; gap:5px; }
+.legendDot{ width:9px; height:9px; border-radius:2px; display:inline-block; }
+.legendDot-info{ border:1.5px dotted var(--ink-dim); }
+.legendDot-click{ background:color-mix(in srgb, var(--accent) 18%, transparent); border:1px solid var(--accent); }
 
 /* ---------- Layout ---------- */
 .grid{
@@ -551,11 +593,25 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
       </div>
     </div>
     <div class="hstat" data-tip="head:ambient"><div class="l">Ambient</div><div class="v tnum" id="stAmbient">—</div></div>
-    <div class="hstat" data-tip="head:tariff"><div class="l">Grid Tariff</div><div class="v tnum" id="stTariff">—</div></div>
+    <div class="hstat" data-tip="head:tariff">
+      <div class="l">Grid Tariff</div>
+      <div class="v tnum" id="stTariff">—</div>
+      <div class="periodTag" id="stTariffPeriod"><i id="stTariffDot"></i><span id="stTariffPeriodName">—</span></div>
+    </div>
     <div class="hstat" data-tip="head:energy"><div class="l">Energy Today</div><div class="v tnum" id="stEnergy">—</div></div>
     <div class="hstat" data-tip="head:spoil"><div class="l">Spoilage Risk</div><div class="v tnum" id="stSpoil">—</div></div>
-    <div class="hstat hstat-click" data-tip="head:energyTotal" id="stEnergyTotalBtn"><div class="l">Total Energy</div><div class="v tnum" id="stEnergyTotal">—</div></div>
-    <div class="hstat hstat-click" data-tip="head:billTotal" id="stBillTotalBtn"><div class="l">Total Bill</div><div class="v tnum" id="stBillTotal">—</div></div>
+    <div class="hstat hstat-click" data-tip="head:energyTotal" id="stEnergyTotalBtn">
+      <div class="l">Total Energy</div><div class="v tnum" id="stEnergyTotal">—</div>
+      <div class="clickHint"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="10" width="3" height="7" rx="0.5" fill="currentColor"/><rect x="8.5" y="6" width="3" height="11" rx="0.5" fill="currentColor"/><rect x="14" y="3" width="3" height="14" rx="0.5" fill="currentColor"/></svg>View breakdown</div>
+    </div>
+    <div class="hstat hstat-click" data-tip="head:billTotal" id="stBillTotalBtn">
+      <div class="l">Total Bill</div><div class="v tnum" id="stBillTotal">—</div>
+      <div class="clickHint"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="10" width="3" height="7" rx="0.5" fill="currentColor"/><rect x="8.5" y="6" width="3" height="11" rx="0.5" fill="currentColor"/><rect x="14" y="3" width="3" height="14" rx="0.5" fill="currentColor"/></svg>View breakdown</div>
+    </div>
+  </div>
+  <div class="uxLegend">
+    <span><i class="legendDot legendDot-info"></i>dotted label = hover for details</span>
+    <span><i class="legendDot legendDot-click"></i>bordered chip = click to explore</span>
   </div>
 </header>
 
@@ -960,10 +1016,10 @@ const SEASONS = {
 // with whatever's left over billed at the plain base rate.
 const BASE_TARIFF = 7.5; // Rs/kWh, a representative commercial/industrial LT/HT rate
 const TARIFF_BANDS = [
-  { key:"offpeak", name:"Off-Peak",  hours:"10pm-6am", mult:0.80, note:"up to 20% below base — low grid demand overnight" },
-  { key:"normal",  name:"Normal",    hours:"6am-9am, 5pm-6pm", mult:1.00, note:"plain base rate" },
-  { key:"solar",   name:"Solar",     hours:"9am-5pm",  mult:0.85, note:"10-20% below base — cheap midday solar generation" },
-  { key:"peak",    name:"Peak",      hours:"6pm-10pm", mult:1.15, note:"10-20% above base — evening demand spike" },
+  { key:"offpeak", name:"Off-Peak",  hours:"10pm-6am", mult:0.80, color:"#3b82f6", note:"up to 20% below base — low grid demand overnight" },
+  { key:"normal",  name:"Normal",    hours:"6am-9am, 5pm-6pm", mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+  { key:"solar",   name:"Solar",     hours:"9am-5pm",  mult:0.85, color:"#f59e0b", note:"10-20% below base — cheap midday solar generation" },
+  { key:"peak",    name:"Peak",      hours:"6pm-10pm", mult:1.15, color:"#dc2626", note:"10-20% above base — evening demand spike" },
 ];
 function tariffPeriodAt(hour){
   if(hour>=22 || hour<6) return TARIFF_BANDS[0];  // 10pm-6am
@@ -2393,10 +2449,13 @@ function renderStats(){
   const {temp,hour} = ambientNow();
   document.getElementById("stDayPhase").textContent = `${dayPhaseLabel(hour)} · Day ${state.dayCount}`;
   document.getElementById("stAmbient").textContent = `${temp.toFixed(1)}°C`;
-  const tariff = tariffAt(Math.floor(hour));
+  const period = tariffPeriodAt(hour);
+  const tariff = BASE_TARIFF*period.mult;
   const tEl = document.getElementById("stTariff");
-  tEl.textContent = `₹${tariff.toFixed(1)}/kWh`;
+  tEl.textContent = `₹${tariff.toFixed(2)}/kWh`;
   tEl.className = "v tnum " + (tariff>BASE_TARIFF*1.05?"bad":tariff>=BASE_TARIFF*0.95?"warn":"good");
+  document.getElementById("stTariffDot").style.background = period.color;
+  document.getElementById("stTariffPeriodName").textContent = `${period.name} · ${period.hours}`;
   document.getElementById("stEnergy").textContent = `${state.energyKWhToday.toFixed(1)} kWh · ₹${state.costToday.toFixed(0)}`;
   document.getElementById("stEnergyTotal").textContent = `${state.energyKWhTotal.toFixed(0)} kWh`;
   document.getElementById("stBillTotal").textContent = `₹${state.costTotal.toFixed(0)}`;
@@ -2911,7 +2970,7 @@ function renderBillBreakdown(){
   const maxPeriodKwh = Math.max(1, ...TARIFF_BANDS.map(b=>byPeriod[b.key].kwh));
   document.getElementById("billByPeriod").innerHTML = TARIFF_BANDS.map(b=>{
     const d = byPeriod[b.key];
-    return `<tr><td class="blabel">${b.name}<div class="billBarWrap"><div class="billBar" style="width:${(d.kwh/maxPeriodKwh*100).toFixed(0)}%"></div></div></td><td>${d.kwh.toFixed(1)}</td><td>₹${d.cost.toFixed(0)}</td></tr>`;
+    return `<tr><td class="blabel">${b.name}<div class="billBarWrap"><div class="billBar" style="width:${(d.kwh/maxPeriodKwh*100).toFixed(0)}%;background:${b.color}"></div></div></td><td>${d.kwh.toFixed(1)}</td><td>₹${d.cost.toFixed(0)}</td></tr>`;
   }).join("");
 
   const maxZoneKwh = Math.max(1, ...byZone.map(d=>d.kwh));
