@@ -995,11 +995,21 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
   <div id="compareModal" role="dialog" aria-modal="true" aria-labelledby="compareModalTitle">
     <button class="mclose" id="compareModalClose" aria-label="Close">×</button>
     <h2 class="mtitle" id="compareModalTitle">Controller comparison — cost vs. temperature control</h2>
-    <div class="mverdict">Every controller mode accumulates the SAME metrics live, tagged to whichever mode was actually driving the plant at each tick — switch modes mid-run (top-left segmented control) to build a real side-by-side record for this exact scenario (product, season, day). Cost alone doesn't win: a cheap mode that lets the product drift out of its safe band is spoiling food to save money.</div>
+    <div class="mverdict">Two-position, Adaptive band, and Variable-speed (VFD) all run continuously, in parallel, every tick — against the SAME weather, tariff clock, and truck deliveries — regardless of which one is shown driving the warehouse view (top-left segmented control just picks which one you're watching, it doesn't pause the others). Cost alone doesn't win: a cheap mode that lets the product drift out of its safe band is spoiling food to save money. Hover any column header or the mode name for what each number means.</div>
     <div class="compareScroll">
       <table class="compareTable">
         <thead>
-          <tr><th>Mode</th><th>Tracked</th><th>₹ total</th><th>₹/kWh avg</th><th>₹ by tariff period</th><th>Time in band</th><th>Excursion severity</th><th>Compressor cycles</th><th>Shelf-life consumed</th></tr>
+          <tr>
+            <th data-tip="cmp:mode">Mode</th>
+            <th data-tip="cmp:tracked">Tracked</th>
+            <th data-tip="cmp:total">₹ total</th>
+            <th data-tip="cmp:rate">₹/kWh avg</th>
+            <th data-tip="cmp:byperiod">₹ by tariff period</th>
+            <th data-tip="cmp:inband">Time in band</th>
+            <th data-tip="cmp:excursion">Excursion severity</th>
+            <th data-tip="cmp:cycles">Compressor cycles</th>
+            <th data-tip="cmp:spoil">Shelf-life consumed</th>
+          </tr>
         </thead>
         <tbody id="compareTbody"></tbody>
       </table>
@@ -1183,8 +1193,8 @@ function vfdEfficiencyMult(capacityFraction){
 // snappier Ki without winding up; a bigger/slower one needs a gentler Ki or
 // it overshoots). Kp still follows the band directly, same as before, since
 // that part of the tuning is about setpoint error, not plant speed.
-function vfdGains(i){
-  const band = cfg.product.band;
+function vfdGains(i, md=cfg){
+  const band = md.product.band;
   const Kp = 1/band;
   const spec = ZONE_SPECS[i];
   const minutesPerDegreeAtFullTilt = (airCapacityKJperK(i)*1000) / spec.compCapacityW / 60;
@@ -1380,6 +1390,63 @@ function freshModeMetrics(){
   return { rule: blank(), adaptive: blank(), vfd: blank(), ai: blank() };
 }
 
+/* ============================================================
+   PARALLEL BENCHMARK SHADOWS (§6) — the live, visualized `state` is always
+   driven by whichever controller mode is selected (cfg.mode) and carries the
+   full twin/telemetry/events machinery. Alongside it, one lightweight
+   "shadow" physical instance runs continuously per OTHER control mode —
+   same ambient, same tariff clock, same dock/turnover disturbances mirrored
+   in from the live run every tick, same product profile — so all controller
+   modes are genuinely being computed in parallel against identical
+   conditions, not just re-labeled history from whenever each was last
+   selected. Shadows intentionally skip the twin estimator/telemetry-noise
+   layer and event log — they need ground-truth physics + control + energy
+   bookkeeping for a fair benchmark, not a sensing-noise simulation each.
+   ============================================================ */
+const SHADOW_KEYS = ["rule","adaptive","vfd"];
+
+function freshShadowState(){
+  return {
+    zoneTemp: [8,8,-5], airTemp: [8,8,-5], wallTemp: [16,16,10],
+    zoneRH: [0.75,0.75,0.80], frost: [0.05,0.08,0.12],
+    compressorOn: [false,false,false], capacityFraction: [0,0,0], piIntegral: [0,0,0],
+    lastHourOnMinutes: [new Array(60).fill(0), new Array(60).fill(0), new Array(60).fill(0)],
+    minRunRemain: [0,0,0], minRestRemain: [0,0,0],
+    defrosting: [false,false,false], defrostTimer: [0,0,0], nextDefrostAt: [240,300,210],
+    spoilIndex: [0,0,0], batchAgeMin: [0,0,0],
+    compRuntimeHr: [0,0,0], trueCapMult: [1,1,1], sensorDriftBias: [0,0,0], zoneSensor: [8,8,-5],
+    zoneLoads: [{},{},{}],
+    doorOpen: false,           // mirrored from the live run each tick — a shared physical fact
+    powerKW: [0.3,0.3,0.3],
+    modeMetrics: freshModeMetrics(),  // only its own mode key is ever populated
+  };
+}
+
+let shadowStates = {};
+function resetShadowStates(){
+  shadowStates = {};
+  SHADOW_KEYS.forEach(k=> shadowStates[k] = freshShadowState());
+}
+
+// Same per-tick ledger update tick() does for the live run (see below),
+// factored out so shadows accumulate identically — same metric, same math,
+// just fed a different (st, md) physical/control pair.
+function accumulateModeMetrics(st, md, dt, kwh, kwhCost, period){
+  const mm = st.modeMetrics[md.mode];
+  mm.minutesTracked += dt;
+  mm.costByPeriod[period.key].kwh += kwh;
+  mm.costByPeriod[period.key].cost += kwhCost;
+  const maxSpoil = Math.max(...st.spoilIndex);
+  if(mm.spoilStart===null) mm.spoilStart = maxSpoil;
+  mm.spoilLast = maxSpoil;
+  let anyOutside = false;
+  for(let i=0;i<N_ZONES;i++){
+    const dev = Math.abs(st.zoneTemp[i] - md.product.target) - md.product.band;
+    if(dev > 0){ mm.degMinOutside += dev*dt; anyOutside = true; }
+  }
+  if(!anyOutside) mm.minutesInBand += dt;
+}
+
 function logEvent(msg, alert){
   state.log.push({t: fmtClock(state.tMin), msg, alert: !!alert});
   if(state.log.length>200) state.log.shift();
@@ -1495,6 +1562,16 @@ function checkTruckSchedule(dt){
     const {temp: ambient} = ambientNow();
     state.zoneTemp[0] = state.zoneTemp[0]*(1-freshFraction) + ambient*freshFraction;
 
+    // A truck arrives regardless of which controller mode is running — mirror
+    // the identical mass-blend/turnover onto every parallel benchmark shadow
+    // too, so all modes see the same exogenous delivery, not a different one.
+    for(const key of SHADOW_KEYS){
+      const sh = shadowStates[key];
+      sh.spoilIndex[0] *= (1-freshFraction);
+      sh.batchAgeMin[0] *= (1-freshFraction);
+      sh.zoneTemp[0] = sh.zoneTemp[0]*(1-freshFraction) + ambient*freshFraction;
+    }
+
     scheduleNextTruckAppt(state.tMin);
   }
 }
@@ -1518,6 +1595,13 @@ function maybeRotateStock(dt){
       const freshFraction = Math.min(0.8, cfg.product.turnoverFraction*0.9 + (Math.random()-0.5)*0.06);
       state.spoilIndex[i] *= (1-freshFraction);
       state.batchAgeMin[i] *= (1-freshFraction);
+      // Outbound/inbound turnover is a logistics schedule, not a controller
+      // effect — mirror the same fraction onto every parallel benchmark shadow.
+      for(const key of SHADOW_KEYS){
+        const sh = shadowStates[key];
+        sh.spoilIndex[i] *= (1-freshFraction);
+        sh.batchAgeMin[i] *= (1-freshFraction);
+      }
       logEvent(`Outbound pick from ${ZONES[i]} — ${(freshFraction*100).toFixed(0)}% of batch staged for shipment`, false);
       pushEvent({ category:"logistics", name:"Outbound pick", zone:i, spec:`${(freshFraction*100).toFixed(0)}% of batch staged` });
       forkliftGo(i, "outbound", 10 + Math.random()*8);
@@ -1705,8 +1789,8 @@ let lastZonePowerKW = [0.3, 0.3, 0.3];
 // previous state, then coupled to its neighbors. This is a genuine Markovian
 // step: every quantity computed below reads last tick's wallTemp/airTemp/
 // zoneTemp and nothing else, and every next tick depends on exactly this one.
-function stepZone(i, dt){
-  const target = cfg.product.target;
+function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
+  const target = md.product.target;
   const {temp: ambient, rh: ambRH} = ambientNow();
   const {hour} = ambientNow();
   const spec = ZONE_SPECS[i];
@@ -1716,16 +1800,16 @@ function stepZone(i, dt){
   // Small thermal mass -> reaches quasi-steady-state in tens of minutes, but
   // it's no longer assumed to be zero, so an ambient swing visibly lags
   // slightly before it reaches the air instead of teleporting through.
-  const wallOutW = uaHalf * (ambient - state.wallTemp[i]);
-  const wallInW  = uaHalf * (state.wallTemp[i] - state.airTemp[i]);
+  const wallOutW = uaHalf * (ambient - st.wallTemp[i]);
+  const wallInW  = uaHalf * (st.wallTemp[i] - st.airTemp[i]);
   const dWall = ((wallOutW - wallInW) * (dt*60) / 1000) / wallCapacityKJperK(i);
-  state.wallTemp[i] += dWall;
+  st.wallTemp[i] += dWall;
 
   // --- doorway infiltration (W) — buoyancy-driven doorway flow, damped by air curtain.
   // Lands on the AIR node — infiltrating warm air mixes with chamber air directly.
   let infiltrationW = 0;
-  if(state.doorOpen && spec.doorAreaM2>0){
-    const dT = ambient - state.airTemp[i];
+  if(st.doorOpen && spec.doorAreaM2>0){
+    const dT = ambient - st.airTemp[i];
     const airVelocity = 0.4; // m/s, typical buoyancy-driven doorway flow for this delta-T
     const curtainEffectiveness = 0.55; // air curtain blocks ~55% of raw infiltration
     infiltrationW = spec.doorAreaM2 * airVelocity * RHO_AIR * CP_AIR*1000 * dT * (1-curtainEffectiveness);
@@ -1740,18 +1824,18 @@ function stepZone(i, dt){
   // --- compressor cooling (W) — cools the AIR node directly, exactly like a real
   // evaporator coil; scaled by capacityFraction (1.0 in on/off modes, continuous
   // in VFD mode), degraded by frosted coil and by gradual real-world equipment wear.
-  const frostPenalty = 1 - Math.min(0.6, state.frost[i]*0.6);
-  const coolingW = state.defrosting[i] ? 0
-    : spec.compCapacityW * frostPenalty * state.trueCapMult[i] * state.capacityFraction[i];
+  const frostPenalty = 1 - Math.min(0.6, st.frost[i]*0.6);
+  const coolingW = st.defrosting[i] ? 0
+    : spec.compCapacityW * frostPenalty * st.trueCapMult[i] * st.capacityFraction[i];
   // --- defrost heater (W) — injects heat into the AIR node while that evaporator defrosts
-  const defrostHeaterW = state.defrosting[i] ? 2500 : 0;
+  const defrostHeaterW = st.defrosting[i] ? 2500 : 0;
 
   // --- AIR <-> PRODUCT convective coupling (W) — the product node only ever
   // exchanges heat with the air, at a rate set by the product's own τ. This is
   // the actual mechanism behind "pre-cooling delay": a pallet doesn't cool
   // because the air did, it cools because it's been convecting with cooled
   // air for long enough — no shortcuts, no separate decay formula.
-  const productCouplingW = productCouplingKJperMinK(i) * 1000/60 * (state.airTemp[i] - state.zoneTemp[i]);
+  const productCouplingW = productCouplingKJperMinK(i) * 1000/60 * (st.airTemp[i] - st.zoneTemp[i]);
 
   // --- incoming warm stock (unload event): a fresh pallet doesn't heat the air much on
   // its own (it's not radiating like a heater) — it IS warm mass that blends into the
@@ -1760,14 +1844,14 @@ function stepZone(i, dt){
   // rather than a stepZone-local heat rate, applied once per truck arrival (see checkTruckSchedule).
 
   const airNetW = wallInW + infiltrationW + shiftW + defrostHeaterW - coolingW - productCouplingW;
-  state.airTemp[i] += (airNetW * (dt*60) / 1000) / airCapacityKJperK(i);
+  st.airTemp[i] += (airNetW * (dt*60) / 1000) / airCapacityKJperK(i);
 
   const productNetW = productCouplingW;
-  state.zoneTemp[i] += (productNetW * (dt*60) / 1000) / productCapacityKJperK(i);
+  st.zoneTemp[i] += (productNetW * (dt*60) / 1000) / productCapacityKJperK(i);
 
   // record the raw load breakdown so the UI can show what's actually driving
   // this zone's AIR temperature right now, as a % share of the gross heat gained.
-  state.zoneLoads[i] = { wall: Math.max(0,wallInW), door: infiltrationW, shift: shiftW, stock: 0, defrost: defrostHeaterW, cooling: coolingW,
+  st.zoneLoads[i] = { wall: Math.max(0,wallInW), door: infiltrationW, shift: shiftW, stock: 0, defrost: defrostHeaterW, cooling: coolingW,
     wallNeg: Math.max(0,-wallInW) }; // a sub-ambient zone can also LOSE heat through walls when ambient dips below it
 
   // record what the compressor is actually removing, for the power/energy ledger —
@@ -1776,50 +1860,50 @@ function stepZone(i, dt){
   // 40% of rated power, not a relay-click's worth either way. In VFD mode this
   // also folds in the non-linear part-load efficiency curve (§4c) — running at
   // low speed costs proportionally more per unit of cooling than full speed.
-  const vfdEff = cfg.mode==="vfd" ? vfdEfficiencyMult(state.capacityFraction[i]) : 1;
-  lastZonePowerKW[i] = state.defrosting[i]
+  const vfdEff = md.mode==="vfd" ? vfdEfficiencyMult(st.capacityFraction[i]) : 1;
+  powerArr[i] = st.defrosting[i]
     ? defrostHeaterW/1000
-    : (coolingW>0 ? coolingW/(ratedCOP(target)*(1-Math.min(0.35,state.frost[i]*0.35))*vfdEff*1000) : 0.3);
+    : (coolingW>0 ? coolingW/(ratedCOP(target)*(1-Math.min(0.35,st.frost[i]*0.35))*vfdEff*1000) : 0.3);
 
   // --- real-world equipment aging: gradual, load-driven, never sudden. A well
   // maintained reciprocating compressor loses on the order of 10-15% of rated
   // capacity over ~15,000-20,000 running hours before a major service — modeled
   // here as a slow linear wear curve against actual accumulated runtime, plus a
   // small continuous random walk (normal mechanical variance, not "failure").
-  if(state.compressorOn[i] && !state.defrosting[i]){
-    state.compRuntimeHr[i] += dt/60;
+  if(st.compressorOn[i] && !st.defrosting[i]){
+    st.compRuntimeHr[i] += dt/60;
   }
   const WEAR_PER_HOUR = 0.10/16000; // ~10% capacity loss per 16,000 running hours
-  const wearFloor = 1 - state.compRuntimeHr[i]*WEAR_PER_HOUR;
-  state.trueCapMult[i] = Math.max(0.8, wearFloor + gaussianNoise(0.0006)*Math.sqrt(dt));
+  const wearFloor = 1 - st.compRuntimeHr[i]*WEAR_PER_HOUR;
+  st.trueCapMult[i] = Math.max(0.8, wearFloor + gaussianNoise(0.0006)*Math.sqrt(dt));
 
   // sensor calibration creep — thermistors drift a fraction of a degree over
   // months, not instantly. Occasionally a technician re-zeroes it (small chance
   // per day), same as a real preventive-maintenance calibration check.
-  state.sensorDriftBias[i] += gaussianNoise(0.0015)*Math.sqrt(dt);
-  if(Math.random() < (0.0007*dt) && Math.abs(state.sensorDriftBias[i])>0.3){
-    state.sensorDriftBias[i] *= 0.15; // periodic recalibration pulls it back near zero
+  st.sensorDriftBias[i] += gaussianNoise(0.0015)*Math.sqrt(dt);
+  if(Math.random() < (0.0007*dt) && Math.abs(st.sensorDriftBias[i])>0.3){
+    st.sensorDriftBias[i] *= 0.15; // periodic recalibration pulls it back near zero
   }
 
   // sensor lag — a real chamber sensor reads AIR (it's mounted on the return duct
   // or wall, not embedded in a pallet), with a small first-order lag from its own
   // housing thermal mass — a few minutes, unrelated to the product's τ.
   const SENSOR_HOUSING_TAU_MIN = 4;
-  state.zoneSensor[i] += (state.airTemp[i]-state.zoneSensor[i])/SENSOR_HOUSING_TAU_MIN * dt;
+  st.zoneSensor[i] += (st.airTemp[i]-st.zoneSensor[i])/SENSOR_HOUSING_TAU_MIN * dt;
 
   // --- humidity: psychrometric-ish, coil condenses moisture when compressor runs
-  let rh = state.zoneRH[i];
+  let rh = st.zoneRH[i];
   rh += (ambRH - rh) * 0.01 * dt;
-  if(state.compressorOn[i]) rh -= 0.006*dt; // dehumidification via coil condensation
-  if(state.doorOpen && i===0) rh += 0.01*dt;
-  state.zoneRH[i] = Math.min(0.99, Math.max(0.25, rh));
+  if(st.compressorOn[i]) rh -= 0.006*dt; // dehumidification via coil condensation
+  if(st.doorOpen && i===0) rh += 0.01*dt;
+  st.zoneRH[i] = Math.min(0.99, Math.max(0.25, rh));
 
   // --- frost accumulation on coil, function of RH and compressor runtime
-  if(state.compressorOn[i] && !state.defrosting[i]){
-    state.frost[i] = Math.min(1, state.frost[i] + 0.0006*(state.zoneRH[i])*dt);
+  if(st.compressorOn[i] && !st.defrosting[i]){
+    st.frost[i] = Math.min(1, st.frost[i] + 0.0006*(st.zoneRH[i])*dt);
   }
-  if(state.defrosting[i]){
-    state.frost[i] = Math.max(0, state.frost[i] - 0.02*dt);
+  if(st.defrosting[i]){
+    st.frost[i] = Math.max(0, st.frost[i] - 0.02*dt);
   }
 
   // --- spoilage: Arrhenius/Q10 kinetics. "Q10" has a fixed, literal meaning — it's
@@ -1832,33 +1916,38 @@ function stepZone(i, dt){
   // perfect control — that's real: refrigeration slows spoilage, it doesn't stop it.
   // batchAgeMin tracks how long the CURRENT batch has been sitting so the number stays
   // interpretable once stock turns over (see maybeSpawnTruck / maybeRotateStock).
-  state.batchAgeMin[i] += dt;
-  const over = Math.max(0, state.zoneTemp[i]-target);
-  const rateMultiplier = Math.pow(cfg.product.qten, over/10);
-  const decayPerMin = (100/(cfg.product.refLife*60)) * rateMultiplier;
-  state.spoilIndex[i] = Math.min(100, state.spoilIndex[i] + decayPerMin*dt);
+  st.batchAgeMin[i] += dt;
+  const over = Math.max(0, st.zoneTemp[i]-target);
+  const rateMultiplier = Math.pow(md.product.qten, over/10);
+  const decayPerMin = (100/(md.product.refLife*60)) * rateMultiplier;
+  st.spoilIndex[i] = Math.min(100, st.spoilIndex[i] + decayPerMin*dt);
 }
 
-function stepCompressor(i, dt){
-  if(state.defrosting[i]){
-    state.capacityFraction[i] = 0;
-    state.defrostTimer[i] -= dt;
-    if(state.defrostTimer[i]<=0){
-      state.defrosting[i]=false;
-      state.compressorOn[i]=false;
-      state.nextDefrostAt[i] = state.tMin + (cfg.product.tau>30? 480: 360);
-      logEvent(`Defrost complete on ${ZONES[i]} evaporator — resuming cooling`, false);
-      closeEvent(`defrost:${i}`, "resumed cooling");
+function stepCompressor(i, dt, st=state, md=cfg){
+  const isLive = st===state; // shadow benchmark instances skip logging/events — see freshShadowState()
+  if(st.defrosting[i]){
+    st.capacityFraction[i] = 0;
+    st.defrostTimer[i] -= dt;
+    if(st.defrostTimer[i]<=0){
+      st.defrosting[i]=false;
+      st.compressorOn[i]=false;
+      st.nextDefrostAt[i] = state.tMin + (md.product.tau>30? 480: 360); // shared sim clock, not per-instance
+      if(isLive){
+        logEvent(`Defrost complete on ${ZONES[i]} evaporator — resuming cooling`, false);
+        closeEvent(`defrost:${i}`, "resumed cooling");
+      }
     }
     return;
   }
 
-  if(state.tMin >= state.nextDefrostAt[i]){
-    state.defrosting[i] = true;
-    state.defrostTimer[i] = 18;
-    state.piIntegral[i] = 0;
-    logEvent(`⚠ Scheduled defrost initiated on ${ZONES[i]} evaporator`, true);
-    pushEvent({ category:"defrost", name:"Scheduled defrost", zone:i, alert:true, key:`defrost:${i}` });
+  if(state.tMin >= st.nextDefrostAt[i]){
+    st.defrosting[i] = true;
+    st.defrostTimer[i] = 18;
+    st.piIntegral[i] = 0;
+    if(isLive){
+      logEvent(`⚠ Scheduled defrost initiated on ${ZONES[i]} evaporator`, true);
+      pushEvent({ category:"defrost", name:"Scheduled defrost", zone:i, alert:true, key:`defrost:${i}` });
+    }
     return;
   }
 
@@ -1866,15 +1955,15 @@ function stepCompressor(i, dt){
   // setpoint — the compressor has no direct sense of product core temperature,
   // only of the air it's blowing past the coil, which is exactly why product
   // lag (τ) matters for what's actually sitting in the chamber.
-  const target = cfg.product.target;
-  const over = state.airTemp[i] - target;
+  const target = md.product.target;
+  const over = st.airTemp[i] - target;
 
-  if(cfg.mode === "vfd"){
+  if(md.mode === "vfd"){
     // Continuous PI capacity modulation — the real behavior of a VFD/digital-
     // scroll compressor: no relay clicks, capacity tracks error smoothly.
-    const { Kp, Ki } = vfdGains(i);  // per-chamber commissioned gains, see vfdGains()
-    state.piIntegral[i] = Math.min(2, Math.max(-2, state.piIntegral[i] + over*Ki*dt));
-    let demand = over*Kp + state.piIntegral[i];
+    const { Kp, Ki } = vfdGains(i, md);  // per-chamber commissioned gains, see vfdGains()
+    st.piIntegral[i] = Math.min(2, Math.max(-2, st.piIntegral[i] + over*Ki*dt));
+    let demand = over*Kp + st.piIntegral[i];
     demand = Math.min(1, Math.max(0, demand));
     // §4c — real VFD compressors have a practical minimum useful speed: they
     // can't idle at an arbitrary tiny fraction. Below the floor, either stay
@@ -1882,20 +1971,20 @@ function stepCompressor(i, dt){
     // the floor (if already running, until load drops far enough to justify
     // stopping outright, with hysteresis so it doesn't chatter at the edge).
     if(demand>0 && demand<VFD_MIN_SPEED){
-      demand = !state.compressorOn[i] ? 0 : (demand<VFD_MIN_SPEED*0.5 ? 0 : VFD_MIN_SPEED);
+      demand = !st.compressorOn[i] ? 0 : (demand<VFD_MIN_SPEED*0.5 ? 0 : VFD_MIN_SPEED);
     }
     // real compressors can't jump capacity instantly — slew-limit toward demand
     const maxSlewPerMin = 0.06;
-    const delta = Math.max(-maxSlewPerMin*dt, Math.min(maxSlewPerMin*dt, demand-state.capacityFraction[i]));
-    state.capacityFraction[i] = Math.min(1, Math.max(0, state.capacityFraction[i]+delta));
-    const wasOn = state.compressorOn[i];
-    state.compressorOn[i] = state.capacityFraction[i] > 0.03;
-    if(!wasOn && state.compressorOn[i]) state.modeMetrics[cfg.mode].cyclesStarted++;
+    const delta = Math.max(-maxSlewPerMin*dt, Math.min(maxSlewPerMin*dt, demand-st.capacityFraction[i]));
+    st.capacityFraction[i] = Math.min(1, Math.max(0, st.capacityFraction[i]+delta));
+    const wasOn = st.compressorOn[i];
+    st.compressorOn[i] = st.capacityFraction[i] > 0.03;
+    if(!wasOn && st.compressorOn[i]) st.modeMetrics[md.mode].cyclesStarted++;
   } else {
     // Two-position (fixed band) or adaptive-band (retuned deadband) relay control.
-    let band = cfg.product.band;
-    if(cfg.mode==="adaptive"){
-      const recentDuty = state.lastHourOnMinutes[i].reduce((a,b)=>a+b,0)/60;
+    let band = md.product.band;
+    if(md.mode==="adaptive"){
+      const recentDuty = st.lastHourOnMinutes[i].reduce((a,b)=>a+b,0)/60;
       band = recentDuty>0.55 ? band*0.7 : band*1.25; // adapt band to avoid short-cycling / hold tighter under load
       // §4b — tariff-aware retuning on top of the load-based retune above: loosen
       // the band (let the chamber drift further, coast on thermal mass) during
@@ -1911,41 +2000,43 @@ function stepCompressor(i, dt){
     // stopped it must rest MIN_REST_MIN. This is what actually prevents
     // short-cycling in the field, not just the 0.3x asymmetric band alone.
     const MIN_RUN_MIN = 3, MIN_REST_MIN = 2;
-    state.minRunRemain[i] = Math.max(0, state.minRunRemain[i]-dt);
-    state.minRestRemain[i] = Math.max(0, state.minRestRemain[i]-dt);
-    if(!state.compressorOn[i] && over > band && state.minRestRemain[i]<=0){
-      state.compressorOn[i] = true;
-      state.minRunRemain[i] = MIN_RUN_MIN;
-      state.modeMetrics[cfg.mode].cyclesStarted++;
+    st.minRunRemain[i] = Math.max(0, st.minRunRemain[i]-dt);
+    st.minRestRemain[i] = Math.max(0, st.minRestRemain[i]-dt);
+    if(!st.compressorOn[i] && over > band && st.minRestRemain[i]<=0){
+      st.compressorOn[i] = true;
+      st.minRunRemain[i] = MIN_RUN_MIN;
+      st.modeMetrics[md.mode].cyclesStarted++;
       // §4a — the logged surge isn't just flavor text: a locked-rotor/inrush
       // current draw really does cost real energy, ~5.8x rated draw for ~2s
       // before the motor spins up to steady running current. Charged as a
       // one-time kWh addition at the CURRENT tariff period, on top of (not
-      // instead of) normal running power from here on. Booked straight to
-      // the totals/mode-ledger rather than the per-zone bill-breakdown table,
-      // since it's a small, instantaneous add-on rather than a sustained rate.
+      // instead of) normal running power from here on. For the LIVE run this
+      // also lands on the visualized bill totals; a shadow benchmark instance
+      // only books it into its own mode ledger (it has no bill of its own).
       {
         const spec = ZONE_SPECS[i];
         const ratedKW = spec.compCapacityW/(ratedCOP(target)*1000);
         const inrushKWh = ratedKW*(5.8-1)*(2/3600);
         const period = tariffPeriodAt((state.tMin/60)%24);
         const inrushCost = inrushKWh*BASE_TARIFF*period.mult;
-        state.energyKWhToday += inrushKWh; state.costToday += inrushCost;
-        state.energyKWhTotal += inrushKWh; state.costTotal += inrushCost;
-        const mm = state.modeMetrics[cfg.mode];
+        if(isLive){
+          state.energyKWhToday += inrushKWh; state.costToday += inrushCost;
+          state.energyKWhTotal += inrushKWh; state.costTotal += inrushCost;
+        }
+        const mm = st.modeMetrics[md.mode];
         mm.costByPeriod[period.key].kwh += inrushKWh;
         mm.costByPeriod[period.key].cost += inrushCost;
       }
-      logEvent(`${ZONES[i]} compressor engaged (surge current ~5.8x rated draw for 2s)`, false);
-    } else if(state.compressorOn[i] && over < -band*0.3 && state.minRunRemain[i]<=0){
-      state.compressorOn[i] = false;
-      state.minRestRemain[i] = MIN_REST_MIN;
+      if(isLive) logEvent(`${ZONES[i]} compressor engaged (surge current ~5.8x rated draw for 2s)`, false);
+    } else if(st.compressorOn[i] && over < -band*0.3 && st.minRunRemain[i]<=0){
+      st.compressorOn[i] = false;
+      st.minRestRemain[i] = MIN_REST_MIN;
     }
-    state.capacityFraction[i] = state.compressorOn[i] ? 1 : 0;
+    st.capacityFraction[i] = st.compressorOn[i] ? 1 : 0;
   }
 
-  state.lastHourOnMinutes[i].shift();
-  state.lastHourOnMinutes[i].push(state.compressorOn[i]?1:0);
+  st.lastHourOnMinutes[i].shift();
+  st.lastHourOnMinutes[i].push(st.compressorOn[i]?1:0);
 }
 
 function tick(dtMin){
@@ -1976,24 +2067,27 @@ function tick(dtMin){
   state.energyKWhTotal += kwh;
   state.costTotal += kwhCost;
 
-  // ---- controller-comparison ledger (§0/§6): accumulate cost, time-in-band,
-  // excursion severity, and spoilage against whichever mode is active RIGHT NOW,
-  // so running mode A then switching to mode B builds a genuine side-by-side
-  // record of how each mode actually performed while it was driving the plant.
-  {
-    const mm = state.modeMetrics[cfg.mode];
-    mm.minutesTracked += dtMin;
-    mm.costByPeriod[period.key].kwh += kwh;
-    mm.costByPeriod[period.key].cost += kwhCost;
-    const maxSpoil = Math.max(...state.spoilIndex);
-    if(mm.spoilStart===null) mm.spoilStart = maxSpoil;
-    mm.spoilLast = maxSpoil;
-    let anyOutside = false;
-    for(let i=0;i<N_ZONES;i++){
-      const dev = Math.abs(state.zoneTemp[i] - cfg.product.target) - cfg.product.band;
-      if(dev > 0){ mm.degMinOutside += dev*dtMin; anyOutside = true; }
-    }
-    if(!anyOutside) mm.minutesInBand += dtMin;
+  // ---- live-run ledger: same accumulator the shadow benchmarks use (below),
+  // fed with the actual visualized run's own numbers (twin/telemetry effects
+  // included) — kept mainly for parity/backward-compat; the Controller
+  // comparison table itself reads from the parallel shadows for all 3 modes.
+  accumulateModeMetrics(state, cfg, dtMin, kwh, kwhCost, period);
+
+  // ---- parallel benchmark shadows (§6): step the OTHER control modes against
+  // the SAME shared clock/ambient/tariff and the SAME dock-door disturbance
+  // the live run just experienced, so "Controller comparison" reflects modes
+  // running genuinely in parallel rather than re-labeled history. Shadows
+  // don't get their own twin estimator/telemetry noise or event log — see
+  // freshShadowState()'s comment for why that's an intentional scope cut.
+  for(const key of SHADOW_KEYS){
+    const sh = shadowStates[key];
+    sh.doorOpen = state.doorOpen;
+    const shMd = { mode:key, product: cfg.product };
+    for(let i=0;i<N_ZONES;i++) stepCompressor(i, dtMin, sh, shMd);
+    for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin, sh, shMd, sh.powerKW);
+    const shKwh = sh.powerKW.reduce((a,b)=>a+b,0)*(dtMin/60);
+    const shCost = shKwh*BASE_TARIFF*period.mult;
+    accumulateModeMetrics(sh, shMd, dtMin, shKwh, shCost, period);
   }
 
   // per-zone, per-day, per-tariff-period ledger — this is what the clickable
@@ -2892,6 +2986,17 @@ function tariffCardHTML(){
 }
 
 const TIPS = {
+  "cmp:mode":     "<b>Controller mode</b>Two-position, Adaptive band, and Variable-speed (VFD) all run continuously in the background, every tick, against the exact same weather/tariff/truck-delivery conditions — genuinely in parallel, not just whichever you last selected. 'Live view' marks the one currently driving the warehouse animation and twin estimator on screen; the other rows keep running and recording even while not shown.",
+  "cmp:live":     "This is the mode currently shown in the main warehouse view — its numbers here come from that same live run. The other rows are computed by an identical background copy of the physics, so the comparison stays fair.",
+  "cmp:tracked":  "<b>Tracked</b>How many sim-hours this mode has been running and recording data. All rows start at zero together and grow in lockstep, since all three run every tick regardless of which is on screen.",
+  "cmp:total":    "<b>₹ total</b>Total electricity cost this mode has racked up over its tracked time, at whatever tariff rate was in effect each minute it ran.",
+  "cmp:rate":     "<b>₹/kWh avg</b>Total cost ÷ total electricity used. A mode that shifts more of its running into cheap Off-Peak/Solar hours (instead of running whenever it happens to be hot) will show a LOWER blended rate here even if it uses the same total electricity — this is what actually rewards tariff-aware behavior.",
+  "cmp:byperiod": "<b>₹ by tariff period</b>The same total cost, split across India's 4 time-of-use bands (Off-Peak, Normal, Solar, Peak) so you can see WHEN the money was spent, not just how much.",
+  "cmp:inband":   "<b>Time in band</b>% of the tracked time that every chamber's product core temperature stayed within its safe target range. This is the main 'is it actually keeping the food properly cold' number — a cheap mode that lets this number drop is saving money by risking spoilage.",
+  "cmp:excursion":"<b>Excursion severity</b>Adds up (how far outside the safe range, in °C) × (how many minutes it stayed there), across all excursions. A short sharp excursion and a long mild one can score similarly here on purpose — both genuinely damage shelf life, just via different paths. Lower is better; zero means the product never left its target band.",
+  "cmp:cycles":   "<b>Compressor cycles</b>How many times the compressor switched from off to on (or, in VFD mode, from idle to actively running), and how often per hour. More cycling wears out the motor faster in real equipment — this is a rough proxy for maintenance cost, not just an energy number.",
+  "cmp:spoil":    "<b>Shelf-life consumed</b>How much the worst chamber's spoilage index (0-100) actually increased while this mode was running. Two modes can spend the same ₹ and still differ here — that's the whole point of comparing cost AGAINST temperature control instead of ranking by price alone.",
+  "cmp:ai":       "<b>AI-based (planned)</b>A 4th mode, not yet implemented — see TODO.md §5 and CONTROL_IO.md Mode D. When built, it will run here as a 4th parallel shadow using only the same noisy telemetry/forecast the other modes could in principle use, so the comparison stays fair.",
   "head:clock":   "<b>Sim clock</b>The hands actually sweep at simulated speed — orange ring = daytime, blue ring = nighttime. This clock runs much faster than your real clock (see the Sim speed slider): a full lap of the minute hand can pass in a couple of real seconds.",
   "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
   "head:tariff":  tariffCardHTML(),
@@ -3156,21 +3261,18 @@ const MODE_LABEL = { rule:"Two-position (on/off)", adaptive:"Adaptive band", vfd
 
 function renderCompare(){
   const tbody = document.getElementById("compareTbody");
-  const rows = Object.keys(state.modeMetrics).map(modeKey=>{
-    const m = state.modeMetrics[modeKey];
+  const rows = SHADOW_KEYS.map(modeKey=>{
+    const m = shadowStates[modeKey].modeMetrics[modeKey];
     const totalKwh = TARIFF_BANDS.reduce((s,b)=>s+m.costByPeriod[b.key].kwh, 0);
     const totalCost = TARIFF_BANDS.reduce((s,b)=>s+m.costByPeriod[b.key].cost, 0);
-    if(m.minutesTracked<=0){
-      return `<tr><td class="cmode">${MODE_LABEL[modeKey]}</td><td colspan="8" style="color:var(--ink-dim)">not run yet this session — select this mode to start recording</td></tr>`;
-    }
-    const pctInBand = (m.minutesInBand/m.minutesTracked*100).toFixed(1);
+    const pctInBand = m.minutesTracked>0 ? (m.minutesInBand/m.minutesTracked*100).toFixed(1) : "0.0";
     const avgRate = totalKwh>0 ? (totalCost/totalKwh).toFixed(2) : "—";
     const periodBreak = TARIFF_BANDS.map(b=>`${b.name}: ₹${m.costByPeriod[b.key].cost.toFixed(0)}`).join(" · ");
     const spoilDelta = (m.spoilLast!==null && m.spoilStart!==null) ? (m.spoilLast-m.spoilStart) : 0;
-    const cyclesPerHr = (m.cyclesStarted/(m.minutesTracked/60)).toFixed(2);
-    const isActive = modeKey===cfg.mode;
-    return `<tr class="${isActive?'activeMode':''}">
-      <td class="cmode">${MODE_LABEL[modeKey]}${isActive?' <span style="color:var(--accent);font-family:ui-sans-serif">(active)</span>':''}</td>
+    const cyclesPerHr = m.minutesTracked>0 ? (m.cyclesStarted/(m.minutesTracked/60)).toFixed(2) : "0.00";
+    const isLive = modeKey===cfg.mode;
+    return `<tr class="${isLive?'activeMode':''}">
+      <td class="cmode" data-tip="cmp:mode">${MODE_LABEL[modeKey]}${isLive?' <span style="color:var(--accent);font-family:ui-sans-serif" data-tip="cmp:live">(live view)</span>':''}</td>
       <td>${(m.minutesTracked/60).toFixed(1)} h</td>
       <td>₹${totalCost.toFixed(0)}</td>
       <td>₹${avgRate}/kWh</td>
@@ -3180,7 +3282,7 @@ function renderCompare(){
       <td>${m.cyclesStarted} (${cyclesPerHr}/h)</td>
       <td>${spoilDelta.toFixed(1)} pts</td>
     </tr>`;
-  }).join("");
+  }).join("") + `<tr><td class="cmode" data-tip="cmp:ai">${MODE_LABEL.ai}</td><td colspan="8" style="color:var(--ink-dim)">not built yet — see TODO.md §5</td></tr>`;
   tbody.innerHTML = rows;
 }
 
@@ -3301,8 +3403,10 @@ function renderBillBreakdown(){
 function setup(){
   state = freshState();
   cfg = { product: PRODUCTS.produce, season: "summer", mode: "rule" };
+  resetShadowStates();
   logEvent("Simulation initialized — chambers at ambient, compressor idle", false);
   logEvent("Twin estimator online — calibrating capacity/UA against synthetic telemetry", false);
+  logEvent("Parallel benchmark shadows online — Two-position/Adaptive/VFD now running side by side", false);
 }
 
 // ---- Public data/control surface for an external AI system to build against.
@@ -3353,7 +3457,16 @@ window.ColdStorageTwin = {
   // comparison" modal reads from — cost by tariff period, time-in-band,
   // excursion severity, cycling, and spoilage, tagged per controller mode.
   // See CONTROL_IO.md for the exact input/output contract each mode uses.
-  getModeMetrics(){ return JSON.parse(JSON.stringify(state.modeMetrics)); },
+  // Reads the parallel benchmark shadows (§6) — Two-position/Adaptive/VFD all
+  // run continuously in the background against identical ambient/tariff/dock
+  // conditions, regardless of which mode is currently visualized. "ai" stays
+  // null until Mode D (§5) is implemented.
+  getModeMetrics(){
+    const out = {};
+    for(const key of SHADOW_KEYS) out[key] = JSON.parse(JSON.stringify(shadowStates[key].modeMetrics[key]));
+    out.ai = null;
+    return out;
+  },
 };
 
 function frame(){

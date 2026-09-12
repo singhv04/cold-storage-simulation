@@ -16,7 +16,14 @@ holds the product at its optimum temperature (not just energy use in isolation).
 - [x] Every control mode (on/off, adaptive, VFD/PI, AI-slot-reserved) runs against the **same
       physics engine, same ambient/season model, same tariff schedule, and same product profile** —
       no per-mode divergence in the plant model, only in `stepCompressor()`'s control law.
-- [x] Every control mode reports the same metrics so they're comparable — `state.modeMetrics[mode]`:
+- [x] **Upgraded from "switch modes to compare" to genuinely parallel**: Two-position, Adaptive, and
+      VFD now all run continuously every tick as independent physical "shadow" instances
+      (`shadowStates`, see `freshShadowState()`/`SHADOW_KEYS` in the simulation file), fed the exact
+      same shared ambient/tariff clock and the same mirrored dock-door/truck-delivery/stock-turnover
+      disturbances as the live/visualized run — not just re-labeled history from whenever each mode
+      was last selected. The mode picker only changes which one drives the on-screen warehouse view;
+      the other two keep running and recording underneath.
+- [x] Every control mode reports the same metrics so they're comparable — `modeMetrics[mode]`:
   - [x] ₹ energy cost, split by tariff period (off-peak/normal/solar/peak)
   - [x] time-in-band (% of time ALL zones' product core temp within target±band)
   - [x] excursion severity (°C·minutes outside band, not just count of excursions)
@@ -24,8 +31,14 @@ holds the product at its optimum temperature (not just energy use in isolation).
   - [x] compressor cycling stats (cycles started, cycles/hour) as a proxy for mechanical wear
 - [x] A dedicated **comparison view**: "Controller comparison" header badge/modal — live table, one
       row per mode, cost vs. temperature-control tradeoff side by side (not a single ranked score).
+      Every column header and the mode-name cell now has a plain-language hover explanation.
 - [x] Documented input/output contract per mode, for later real-hardware integration —
       see `CONTROL_IO.md`.
+- [x] Audited the existing dashboard charts (Zone temperature+forecast, Compressor power draw,
+      Spoilage risk index, load-breakdown contribution panel) for redundancy/value — kept as is: each
+      answers a genuinely different question (control quality / cost driver / business outcome) and
+      none were found to be low-value filler. Nearly every stat/card already carried a hover
+      explanation from before this pass; the actual gap was the new comparison table, now closed.
 
 ---
 

@@ -141,33 +141,44 @@ TODO.md §5).
 
 ## Benchmarking harness (§6) — what it measures and how to read it
 
-Every mode above writes into the same live ledger, `state.modeMetrics[cfg.mode]`, updated once per
-tick in `tick()` regardless of which mode is active — tagged to whichever mode was actually driving
-the plant at that tick. This makes mode-switching mid-run a genuine A/B/C/D log, not four separate
-simulations that need reconciling afterward.
+**Modes A/B/C run genuinely in parallel, always, regardless of what's on screen.** The visualized
+`state` (full twin/telemetry/events/UI) is driven by whichever mode is picked in the header — but
+independently of that, three lightweight physical "shadow" instances (`shadowStates.rule`,
+`.adaptive`, `.vfd`, see `freshShadowState()`/`SHADOW_KEYS`) step every tick regardless of the
+picker, each running its OWN controller against the SAME shared sim clock, ambient/tariff schedule,
+and the SAME mirrored dock-door/truck-delivery/stock-turnover events as the live run (see
+`checkTruckSchedule`/`maybeRotateStock`'s shadow-mirroring loops and `tick()`'s shadow-stepping
+block). A shadow deliberately skips the twin estimator, telemetry noise, and event log — it needs
+ground-truth physics + control + energy bookkeeping for a fair benchmark, not a duplicated sensing
+simulation per mode. Selecting a mode in the header only changes which one is animated/visualized;
+it does not pause or reset the other two, and switching back later finds them still running with
+uninterrupted history.
 
-**Per mode, tracked continuously:**
+**Per mode, tracked continuously in `shadowStates[mode].modeMetrics[mode]`:**
 | Metric | Field | Meaning |
 |---|---|---|
-| Time driven | `minutesTracked` | sim-minutes this mode was active |
+| Time driven | `minutesTracked` | sim-minutes this mode has been running (grows in lockstep across all 3 — they never stop) |
 | Cost by tariff period | `costByPeriod[periodKey].{kwh,cost}` | ₹ and kWh split across offpeak/normal/solar/peak |
 | Time-in-band | `minutesInBand` | minutes ALL 3 zones were within `target ± band` of product core temp |
 | Excursion severity | `degMinOutside` | Σ (°C beyond band × minutes) — deviation size × duration, across all zones |
 | Compressor cycling | `cyclesStarted` | OFF→ON transitions, summed across zones — a wear proxy |
-| Shelf-life consumed | `spoilStart` / `spoilLast` | worst-zone spoilage index (0–100) at first vs. most recent tick this mode was active |
+| Shelf-life consumed | `spoilStart` / `spoilLast` | worst-zone spoilage index (0–100) at first vs. most recent tick this mode has run |
 
 **Access points:**
-- UI: the "Controller comparison" header badge/modal — live table, one row per mode.
-- Programmatic: `window.ColdStorageTwin.getModeMetrics()` — returns a deep-cloned snapshot, safe to
-  poll from an external script/notebook for offline analysis.
+- UI: the "Controller comparison" header badge/modal — live table, one row per mode, all three
+  updating simultaneously. Every column header and the mode-name cell has a hover explanation
+  (same `data-tip`/`TIPS` mechanism used everywhere else on the dashboard, keys prefixed `cmp:`).
+- Programmatic: `window.ColdStorageTwin.getModeMetrics()` — returns a deep-cloned snapshot of all
+  three shadows' ledgers (plus `ai: null` until Mode D exists), safe to poll from an external
+  script/notebook for offline analysis.
 
-**How to run a fair benchmark:** hold product, season, and day range fixed; switch `cfg.mode` (via
-UI or `ColdStorageTwin.setControllerMode()`) between scenario runs, or run each mode for an equal
-number of sim-hours within one session and compare the accumulated rows. Do not compare rows with
-very different `minutesTracked` without normalizing (₹/hour, °C·min/hour, cycles/hour) — the modal
-already reports the normalized forms (₹/kWh, %-in-band, cycles/hour) for this reason.
+**How to run a fair benchmark:** there is nothing to set up — all three have been accumulating
+since the sim started (or since the last "Reset run"). Just open "Controller comparison" and read
+the rows; `minutesTracked` is identical across rows at any given moment, so raw totals are already
+comparable without normalizing — though ₹/kWh, %-in-band, and cycles/hour are still reported
+because they're the more meaningful units for judging a controller's behavior, not just its scale.
 
 **What this benchmark deliberately does NOT yet do** (future work, not in scope for this file):
 seeded/reproducible runs (TODO.md §2), so re-running the "same" scenario twice will differ in
 exact truck timing and sensor noise draw — fine for a rough comparison, not yet fine for a precise
-regression test between mode versions.
+regression test between mode versions. A 4th shadow for Mode D will slot in the same way once built.
