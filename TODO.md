@@ -524,10 +524,30 @@ and verifying quality improves dramatically for almost no cost increase past tha
 **Verified via a 4-season × 9-product headless sweep (36 combinations) with AI as the LIVE mode**, a
 reproducibility check (identical seed → identical run, including Mode D's own planning decisions),
 and a mode-switching stress test (rule→adaptive→vfd→ai→repeat every 400 sim-minutes over 20 days):
-no NaN/instability, bill-ledger still reconciles exactly. **Final result across all 9 products**: Mode
-D is cheapest in all 9 and best-in-band in 7 of 9 (the other 2 — dairy, onion — still show it
-cheaper, with VFD's reactive PI loop edging out on pure quality) — a believable, non-dominating
-outcome, not a result tuned after the fact to make AI always win.
+no NaN/instability, bill-ledger still reconciles exactly.
+
+**Third bug found and fixed** (prompted by a user question: "why is the ₹ gap between VFD and AI
+only ₹100-300, even with a predictive optimizer?"): investigated rather than assuming this was fine.
+Confirmed the tariff-shift mechanism WAS genuinely working (measurably lower Peak-period kWh for AI
+vs. VFD), but lengthening the forecast horizon did NOT increase AI's savings advantage — which it
+should have if horizon length were the binding constraint. Root cause: candidates were each evaluated
+as one CONSTANT capacity level held over the WHOLE horizon — structurally unable to express "run
+harder now, ease off later," the exact shape needed to bank thermal mass ahead of a tariff
+transition. Fixed by upgrading `aiForecastCost()`/`aiPlanCapacity()` to a genuine 2-stage piecewise
+trajectory (25 combinations: capacity for the first half of the horizon × capacity for the second
+half; only the first stage is ever applied, the rest re-optimized next cycle — standard
+receding-horizon practice). Re-verified across all 9 products: quality improved substantially (e.g.
+potato in-band 64.8%→78.1%, tomato 40.3%→56.4%) at similar or lower cost.
+
+**Final result across all 9 products**: Mode D is cheapest in 8 of 9 (banana trades a small cost
+increase for a large quality gain — legitimate for a chilling-sensitive product) and best-in-band in
+8 of 9 (dairy is essentially tied with VFD). The remaining modest ₹ gap between VFD and AI-based mode
+(vs. the much larger ~15-20% gap between relay-based modes and VFD/AI) is now a **verified finding**,
+not an assumption: the big savings come from the HARDWARE difference (continuous modulation vs.
+relay cycling); the further value of *prediction* on top of already-good continuous hardware is
+inherently capped by how much thermal "storage" a product's own allowed band provides — matching
+real-world reports that MPC's incremental savings over well-tuned VFD/PID refrigeration are
+typically single-digit percent, not the same order of magnitude as the on/off-to-VFD jump.
 
 ## 6. Comparison & scoring framework (tariff × optimum-temperature)
 

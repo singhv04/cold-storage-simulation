@@ -255,8 +255,11 @@ avoid throughout.
 **Control law:**
 ```
 every AI_REPLAN_INTERVAL_MIN (5 min; a real MPC re-solves periodically, not every control tick):
-  for each candidate in AI_CANDIDATE_LEVELS = [0, 0.25, 0.5, 0.75, 1.0]:
+  for each (capFirst, capSecond) in AI_CANDIDATE_LEVELS × AI_CANDIDATE_LEVELS   // 5×5 = 25 trajectories
+                                     (AI_CANDIDATE_LEVELS = [0, 0.25, 0.5, 0.75, 1.0]):
     roll forward AI_HORIZON_MIN (90 min, in AI_HORIZON_STEP_MIN=10min steps):
+      use capFirst for the first half of the horizon, capSecond for the second half —
+        a genuine (if small) TRAJECTORY, not one constant level held the whole time
       forecast ambient/hour via ambientForecastAt(); look up tariffPeriodAt(hour)
       forecast wallW (nameplate UA), shiftW (known roster), and — for Zone A within
         20min of state.nextTruckAppt — the anticipated delivery heat load
@@ -264,7 +267,9 @@ every AI_REPLAN_INTERVAL_MIN (5 min; a real MPC re-solves periodically, not ever
       step airTemp, then zoneTemp (same physics formulas as the real plant)
       accumulate: ₹ cost (forecasted tariff × forecasted power)
                 + AI_QUALITY_PENALTY_RS_PER_DEGMIN(50) × max(0, |zoneTemp-target|-band) × step_minutes
-  aiPlannedCapacity[i] = whichever candidate had the LOWEST total (cost + penalty)
+  aiPlannedCapacity[i] = capFirst of whichever (capFirst,capSecond) pair had the LOWEST total —
+    only the FIRST stage's decision is ever applied; the rest of the plan is thrown away and
+    re-optimized from fresh information at the next re-plan, standard receding-horizon practice
   aiNextPlanAt[i] = now + AI_REPLAN_INTERVAL_MIN
 
 every tick: capacityFraction[i] slew-limits toward aiPlannedCapacity[i], max 0.06/min (identical
@@ -291,9 +296,27 @@ worse than every other mode — because each individual 90-minute re-plan looked
 (small predicted deviation) while compounding, across many re-planning cycles, into catastrophic
 long-run drift: a classic short-horizon-MPC pitfall, not a bug in the optimization itself. Swept
 weights 2/10/30/60/100 and found quality improves dramatically for almost no cost increase well past
-2 — settled on `50`. Re-verified across all 9 products: Mode D is now cheapest in all 9 AND
-best-in-band in 7 of 9 (the other 2 — dairy, onion — still show it cheaper, with VFD's reactive PI
-loop edging out on pure quality) — a believable, non-dominating result.
+2 — settled on `50`.
+
+**Second bug found and fixed** (prompted by a user question: "why is the ₹ gap between VFD and AI
+only ₹100-300 even with a predictive optimizer?"): investigated rather than assuming this was fine.
+Confirmed the tariff-shifting mechanism WAS genuinely working (AI's Peak-period kWh was measurably
+lower than VFD's), but lengthening the forecast horizon (90→180→240→300 min) did NOT increase AI's
+savings advantage — which it should have, if horizon length were the binding constraint. Root cause:
+the original version evaluated each candidate as one CONSTANT capacity level held over the entire
+horizon — structurally unable to express "run harder now, ease off later," exactly the shape needed
+to properly bank thermal mass ahead of a tariff transition. Fixed by upgrading to the genuine 2-stage
+piecewise trajectory described above. Re-verified across all 9 products: quality improved
+substantially (e.g. potato in-band 64.8%→78.1%, tomato 40.3%→56.4%) at similar or lower cost — Mode D
+is now cheapest in 8 of 9 products (banana trades a small cost increase for a large quality gain — a
+legitimate choice for a chilling-sensitive product) and best-in-band in 8 of 9 (dairy is essentially
+tied with VFD). The remaining ~₹100-300 gap between VFD and AI (vs. the much larger ~15-20% gap
+between relay-based modes and VFD/AI) is now a **verified, not assumed, finding**: the big savings
+come from the HARDWARE difference (continuous modulation vs. relay cycling); the further value of
+*prediction* on top of already-good continuous hardware is inherently capped by how much thermal
+"storage" the product's own allowed temperature band provides — matching real-world reports that MPC's
+incremental savings over well-tuned VFD/PID refrigeration are typically single-digit percent, not the
+same order of magnitude as the on/off-to-VFD jump.
 
 ---
 
