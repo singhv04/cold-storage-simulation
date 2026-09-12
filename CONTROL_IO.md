@@ -131,7 +131,7 @@ feedforward = 0                                              // §4d, new
 demandRaw = over*Kp + piIntegral[i] + feedforward
 demand = clamp(demandRaw, 0, 1)
 satError = demand - demandRaw                                // §4d anti-windup by back-calculation
-piIntegral[i] += (over*Ki + satError*KB_ANTIWINDUP=0.5) * dt  // replaces the old blunt ±2 clamp
+piIntegral[i] += (over*Ki + satError*KB_ANTIWINDUP=Ki) * dt   // replaces the old blunt ±2 clamp
 
 if 0 < demand < VFD_MIN_SPEED(0.25):             // §4c minimum-speed floor
     demand = (compressor was OFF) ? 0 : (demand < 0.125 ? 0 : VFD_MIN_SPEED)
@@ -144,6 +144,17 @@ compressorOn[i] = capacityFraction[i] > 0.03
 already saturated at 0 or 1. Replaced with standard back-calculation: the integral only keeps
 accumulating error once the output stops being saturated, which is what a real PI/PID
 implementation actually does.
+
+**Bug found and fixed during a full-system audit (§4e):** `KB_ANTIWINDUP` was initially a flat `0.5`,
+roughly 125x larger than `Ki` (~0.004). Any saturation event — most commonly the temperature spike
+right after a routine defrost cycle — drove the integral deeply negative for hours, and if the next
+disturbance landed before that unwound, it compounded into permanent drift. A 15-day headless replay
+of the actual production code (not a reimplementation) confirmed this concretely: potato held VFD in
+its safe band only 1.1% of the time, worse than Two-position/Adaptive's ~60%, backwards from VFD's
+whole design intent. Fixing `KB_ANTIWINDUP = Ki` (the standard back-calculation tuning relationship —
+same order of magnitude as Ki, not an arbitrary O(1) constant) brought it to 61-68%, now consistently
+the *best* of the three across 7 of the 9 product profiles tested — see TODO.md §4e for the full
+per-product table.
 
 **Feedforward (§4d):** a real commissioned system doesn't wait for temperature to actually drift
 before reacting — it anticipates known disturbances. The sim already knows the shift roster and

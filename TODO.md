@@ -230,6 +230,69 @@ value for the effort:**
       compressor wear, but the relay/contactor itself has no separate failure path or maintenance
       trigger yet.
 
+## 4e. Full-system audit (headless replay of the REAL production code, not a reimplementation)
+
+Prompted by "make sure it's developed each of the required modules and do proper check... do proper
+audit." Instead of re-reasoning about the code or reimplementing it in a test script (which itself
+could introduce transcription errors), built a headless harness that stubs just enough of the DOM to
+`eval()`/run the **actual** `simulation/cold_storage_simulation.html` script content directly in
+Node, then drove `setup()`/`tick()` for 15 simulated days across all 9 product profiles, checking
+every state array for NaN/Infinity/out-of-range values and inspecting the resulting cost/in-band/
+cycle numbers for physical plausibility.
+
+**Found and fixed 3 real bugs this way** (none caught by syntax-checking or unit-style reimplemented
+tests, because they only show up over many simulated days of real dynamics):
+
+1. **VFD anti-windup gain was ~125x too large** — `KB_ANTIWINDUP` was a flat `0.5` against `Ki`
+   values around `0.004`. Any saturation event (routine post-defrost temperature spike) slammed the
+   PI integral deeply negative for hours, and if the next disturbance arrived before it unwound, this
+   compounded into permanent drift. Measured impact: potato went from VFD holding band only **1.1%**
+   of a 15-day run (worse than Two-position/Adaptive's ~60%, backwards from VFD's whole design intent)
+   to **61-68%** after fixing `KB_ANTIWINDUP = Ki` (matching the standard tuning relationship for
+   back-calculation anti-windup) — now consistently the *best* of the three, as intended. This is the
+   single highest-impact fix from this audit; see `stepCompressor()`.
+2. **Incoming truck deliveries were modeled at literal outdoor ambient temperature** — up to ~41°C in
+   an Indian summer — for every product, including deep-freeze meat. Fixed with a flat
+   `TRANSIT_INSULATION_C = 8` offset (a loaded, part-shaded truck doesn't fully equilibrate to peak
+   ambient during a short haul), floored at the product's own target. See `checkTruckSchedule()`.
+3. **Frozen/dairy/pharma items were using the same ambient-based incoming-temp assumption as
+   non-cold-chain produce** — physically wrong, since real frozen/dairy/pharma logistics use proper
+   reefer/cold-chain transport end-to-end (frozen meat arrives already frozen; that's what a dedicated
+   blast-freeze process is for, not ordinary storage-zone cooling). Added a `coldChainTransport: true`
+   flag (dairy, meat, pharma) so these arrive near `target+8` instead of near ambient — bulk
+   potato/onion and most Indian fresh produce correctly keep the ambient-based estimate, since
+   real-world practice genuinely often lacks end-to-end cold-chain for those (a well-documented actual
+   gap in Indian agri-logistics, not a simulation shortcut).
+
+**Result across all 9 products, 15-day headless replay of the fixed code** (`inBand%` = % of tracked
+time ALL 3 zones held within target±band; VFD consistently ranks best on both cost and quality after
+these fixes, matching real-world expectations for the first time):
+
+| Product | Two-position | Adaptive | VFD |
+|---|---|---|---|
+| potato | 60.1% | 61.8% | **63.8%** |
+| onion | 72.9% | 74.0% | **76.1%** |
+| tomato | 32.6% | 37.5% | **43.3%** |
+| banana | 15.9% | 21.5% | **26.1%** |
+| mango | 40.1% | 44.8% | **49.3%** |
+| meat | 26.4% | 31.6% | **45.2%** |
+| pharma | 28.3% | 35.0% | **36.4%** |
+| dairy | 1.5% | 1.6% | **9.5%** |
+| produce | 0.0% | 0.0% | 1.6% |
+
+**Open question, NOT unilaterally fixed** (flagged for a decision, not a code defect): "Leafy
+produce" and, to a lesser extent, "Dairy crates" still show low in-band% because their delivery
+INTERVAL is shorter than or comparable to their thermal time constant (τ) — e.g. produce's 16h
+delivery interval vs 12h τ means a fresh (still-warm) delivery can arrive before the previous one has
+even finished converging, so the zone's average product temperature never really settles, regardless
+of controller. This may be intentionally realistic (fast-turnover leafy greens genuinely are hard to
+hold at tight temperature without a dedicated pre-cooling step — a real, well-documented cold-chain
+problem) rather than a bug to silently patch by changing product data. Options: (a) leave as an
+intentionally hard stress-test scenario and say so explicitly in the UI, (b) moderate "Leafy
+produce"'s `turnoverFraction`/`deliveryIntervalHr` to be less of an outlier vs. the rest of the table,
+or (c) add an explicit receiving-dock "pre-cool before put-away" process (a real facility feature)
+that isn't modeled at all right now. Left open for a product/scope decision.
+
 ## 5. NEW: AI-based control approach (4th mode)
 
 - [ ] Define what "AI-based" means concretely for this sim — proposed scope: a learned policy

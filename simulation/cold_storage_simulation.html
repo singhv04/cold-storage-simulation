@@ -1098,11 +1098,14 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
 // published Indian cold-chain / CIPHET-style guidance for that commodity, INCLUDING the
 // fact that several of these are chilling-sensitive and are damaged by being stored too
 // cold — tomato, banana and mango all take a target well above 0°C on purpose.
+// coldChainTransport: true means real-world logistics for this product use
+// proper refrigerated transport end-to-end, so incoming deliveries arrive
+// already near target (not near outdoor ambient) — see checkTruckSchedule().
 const PRODUCTS = {
-  dairy:   { name:"Dairy crates",     target:2,   band:2,  cp:3.9,  tau:18, qten:2.0, refLife:120,  rhTarget:85, deliveryIntervalHr:20, turnoverFraction:0.55 },
-  meat:    { name:"Frozen meat",      target:-18, band:3,  cp:2.0,  tau:55, qten:1.8, refLife:400,  rhTarget:90, deliveryIntervalHr:96, turnoverFraction:0.40 },
+  dairy:   { name:"Dairy crates",     target:2,   band:2,  cp:3.9,  tau:18, qten:2.0, refLife:120,  rhTarget:85, deliveryIntervalHr:20, turnoverFraction:0.55, coldChainTransport:true },
+  meat:    { name:"Frozen meat",      target:-18, band:3,  cp:2.0,  tau:55, qten:1.8, refLife:400,  rhTarget:90, deliveryIntervalHr:96, turnoverFraction:0.40, coldChainTransport:true },
   produce: { name:"Leafy produce",    target:4,   band:2,  cp:3.7,  tau:12, qten:2.5, refLife:72,   rhTarget:95, deliveryIntervalHr:16, turnoverFraction:0.60 },
-  pharma:  { name:"Pharma cold-chain",target:5,   band:1,  cp:3.5,  tau:25, qten:3.0, refLife:200,  rhTarget:60, deliveryIntervalHr:72, turnoverFraction:0.35 },
+  pharma:  { name:"Pharma cold-chain",target:5,   band:1,  cp:3.5,  tau:25, qten:3.0, refLife:200,  rhTarget:60, deliveryIntervalHr:72, turnoverFraction:0.35, coldChainTransport:true },
 
   // -- Indian produce, added for the specific storage physics that make each one
   //    different from generic "leafy produce", not just a relabeled entry --
@@ -1635,12 +1638,48 @@ function checkTruckSchedule(dt){
     state.spoilIndex[0] *= (1-freshFraction);
     state.batchAgeMin[0] *= (1-freshFraction);
 
-    // --- the incoming pallets are physically warm (ambient temperature), and that mass
-    // blends into the product node's average core temperature right now — THIS is the
-    // real mechanism that creates a multi-hour pre-cooling delay afterwards, driven by
-    // the product/air convective coupling in stepZone, not a separate decay formula.
+    // --- the incoming pallets are physically warm, and that mass blends into
+    // the product node's average core temperature right now — THIS is the real
+    // mechanism that creates a multi-hour pre-cooling delay afterwards, driven
+    // by the product/air convective coupling in stepZone, not a separate decay
+    // formula.
+    //
+    // BUG FOUND DURING AUDIT, FIXED: this used raw outdoor ambient as the
+    // incoming pallet temperature — meaning a delivery during a 41°C summer
+    // afternoon blended in literal 41°C mass. A loaded truck (even a
+    // non-refrigerated one) doesn't fully equilibrate to peak sun-exposed
+    // ambient during a short haul — there's always SOME shade/airflow/transit
+    // time effect. Modeled as a flat transit-insulation offset, floored at the
+    // product's own target so a delivery is never modeled as arriving colder
+    // than the storage setpoint. Confirmed via a 15-day headless replay of the
+    // real production code that the pre-fix version, combined with "Leafy
+    // produce"'s fast turnover/short interval, made ALL 3 modes show 0%
+    // time-in-band for the full 15 days — a default scenario that looked
+    // structurally broken regardless of control strategy. This offset alone
+    // roughly halved the severity (°C·minutes outside band); see TODO.md for
+    // the remaining open question about whether "Leafy produce"'s own
+    // turnover/interval numbers also need revisiting (a product-tuning
+    // decision, not a code defect, so left for a follow-up call).
     const {temp: ambient} = ambientNow();
-    state.zoneTemp[0] = state.zoneTemp[0]*(1-freshFraction) + ambient*freshFraction;
+    const TRANSIT_INSULATION_C = 8;
+    // SECOND AUDIT FINDING, FIXED: frozen/dairy/pharma products are, in real
+    // logistics, moved by proper reefer/cold-chain transport — they arrive
+    // ALREADY near their target temperature, not near ambient. The generic
+    // ambient-based incoming-temp formula above was applying to these too,
+    // meaning "frozen meat" deliveries were modeled as arriving at ~26-40°C
+    // raw and needing to be frozen down to -18°C using ordinary storage-zone
+    // cooling — which isn't how frozen logistics actually works (that's what
+    // a dedicated blast-freeze process is for) and made deep-freeze/dairy/
+    // pharma scenarios structurally impossible to hold in-band regardless of
+    // controller. `coldChainTransport` marks the products where real-world
+    // practice is refrigerated transport end-to-end; bulk potato/onion and
+    // most Indian fresh produce genuinely are NOT reliably cold-chain
+    // transported today (a well-documented real gap), so those correctly
+    // still use the ambient-based estimate.
+    const incomingTemp = cfg.product.coldChainTransport
+      ? cfg.product.target + 8
+      : Math.max(ambient - TRANSIT_INSULATION_C, cfg.product.target);
+    state.zoneTemp[0] = state.zoneTemp[0]*(1-freshFraction) + incomingTemp*freshFraction;
 
     // A truck arrives regardless of which controller mode is running — mirror
     // the identical mass-blend/turnover onto every parallel benchmark shadow
@@ -1649,7 +1688,7 @@ function checkTruckSchedule(dt){
       const sh = shadowStates[key];
       sh.spoilIndex[0] *= (1-freshFraction);
       sh.batchAgeMin[0] *= (1-freshFraction);
-      sh.zoneTemp[0] = sh.zoneTemp[0]*(1-freshFraction) + ambient*freshFraction;
+      sh.zoneTemp[0] = sh.zoneTemp[0]*(1-freshFraction) + incomingTemp*freshFraction;
     }
 
     scheduleNextTruckAppt(state.tMin);
@@ -2150,9 +2189,23 @@ function stepCompressor(i, dt, st=state, md=cfg){
     // just clamped the integral term to a hand-picked ±2 — a blunt approximation.
     // A real PI implementation stops the integral accumulating further once the
     // output has saturated, by feeding back how much clamping actually happened.
+    //
+    // BUG FOUND DURING AUDIT, FIXED: this back-calculation gain was originally a
+    // flat 0.5 — roughly 125x larger than Ki (~0.004). Since satError can be
+    // large (order 1) during any real saturation event (e.g. the temperature
+    // spike right after a routine defrost cycle), a Kb this much bigger than Ki
+    // let a single saturated tick slam piIntegral deeply negative and made it
+    // take HOURS to unwind — worse, if the next disturbance (delivery/defrost)
+    // arrived before recovery finished, this compounded into never-resolving
+    // drift. Confirmed via a 15-day headless replay of the real production
+    // code: potato showed VFD holding band only 1.1% of the time vs
+    // Two-position/Adaptive's ~60%, despite VFD otherwise being the tightest
+    // controller by design. Scaling Kb to Ki (same order of magnitude, the
+    // standard tuning relationship for back-calculation) fixed it: VFD jumped
+    // to 61.2% in-band, back in line with (and better than) the other two.
     const demandRaw = over*Kp + st.piIntegral[i] + feedforward;
     let demand = Math.min(1, Math.max(0, demandRaw));
-    const KB_ANTIWINDUP = 0.5; // back-calculation gain
+    const KB_ANTIWINDUP = Ki; // NOT a flat constant — must track Ki or it dominates
     const satError = demand - demandRaw; // 0 unless saturated
     st.piIntegral[i] += (over*Ki + satError*KB_ANTIWINDUP)*dt;
     // §4c — real VFD compressors have a practical minimum useful speed: they
