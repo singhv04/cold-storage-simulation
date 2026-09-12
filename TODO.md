@@ -57,7 +57,9 @@ holds the product at its optimum temperature (not just energy use in isolation).
       exists (start with the 5 Indian items: potato, onion, tomato, banana, mango).
 - [ ] Implement true independent per-zone setpoints (Zone A/B/C should be able to hold different
       products at different targets simultaneously — currently all 3 chambers share the one active
-      product's setpoint, per README's stated known limitation).
+      product's setpoint, per README's stated known limitation). **Explicitly out of scope for now**
+      (per direct instruction) alongside real-hardware integration (§7) — everything else in this
+      roadmap should be pursued as realistically as possible; these two specifically are parked.
 
 ## 2. Digital twin / estimator layer
 
@@ -250,21 +252,25 @@ value for the effort:**
 
 ## 6. Comparison & scoring framework (tariff × optimum-temperature)
 
-- [ ] Build a scenario runner: same product, same season, same day(s), same random seed, run through
-      all 4 controller modes back to back (or in parallel state copies) and collect the metrics from
-      §0.
-- [ ] Primary comparison axes:
-  - [ ] ₹ spent per day/week (broken down by tariff period) — the cost axis.
-  - [ ] Time-weighted deviation from optimum product temperature (°C·hours outside target band) —
-        the quality axis. Do not collapse this into a single "average temperature" number; excursion
-        severity and duration both matter for spoilage.
-- [ ] Present results as a cost-vs-quality tradeoff (e.g., a scatter of ₹/day against °C·hours
-      outside band per mode), not a single ranked winner — different products/seasons may favor
-      different modes.
-- [ ] Include spoilage/shelf-life-consumed as a secondary derived metric from the temperature axis,
-      since that's the real business consequence of poor temperature control.
-- [ ] Surface this comparison in the UI (new modal or panel, alongside Events/Glossary/Design
-      summary) so the tradeoff is visible to someone using the tool, not just logged internally.
+- [x] Build a scenario runner: same product, same season, same day(s), same environmental
+      disturbances (§0), run through all 3 built controller modes in parallel (not back-to-back — see
+      §0's shadow-instance design) and collect the metrics.
+- [x] Primary comparison axes, both present in the "Controller comparison" table:
+  - [x] ₹ spent, broken down by tariff period — the cost axis.
+  - [x] Time-weighted deviation from optimum product temperature (°C·minutes outside target band,
+        `degMinOutside`) — the quality axis, kept separate from a single "average temperature" number.
+- [x] Present results as a cost-vs-quality tradeoff (table, all metrics side by side per mode), not a
+      single ranked winner.
+- [x] Include spoilage/shelf-life-consumed as a derived metric (`spoilStart`/`spoilLast` delta).
+- [x] Surfaced in the UI: the "Controller comparison" header badge/modal.
+- [x] **New: a literal temperature-vs-time chart, not just aggregate stats** — added
+      `drawMultiLineChart()` + a worst-zone temperature overlay (all 3 modes, last 6h, shaded
+      safe-band reference) inside the comparison modal. This is the direct, visible answer to
+      "do the 3 modes' temperatures actually differ over time under the same environment?" — until
+      this, that divergence was only inferable from aggregate stats (%-in-band, °C·min), never
+      actually SEEN. Confirmed the underlying physics already diverges correctly per mode (each
+      shadow's `zoneTemp`/`airTemp` are independently stepped, never copied from another instance —
+      only the *disturbances*, not the *outcome*, are shared across modes) before adding the chart.
 
 ## 7. Integration boundary (for later — real hardware connection)
 

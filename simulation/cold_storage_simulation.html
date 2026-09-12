@@ -1014,8 +1014,21 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
         <tbody id="compareTbody"></tbody>
       </table>
     </div>
+
+    <div style="margin-top:16px">
+      <h3 style="font-size:13px;margin:0 0 6px;color:var(--ink)" data-tip="cmp:tempchart">Worst-zone temperature, all 3 modes, last 6h — the actual visible proof they diverge</h3>
+      <canvas class="chart" id="compareTempChart" style="height:150px"></canvas>
+      <div class="chartlabel"><span id="compareTempMin">—</span><span id="compareTempMax">—</span></div>
+      <div class="legend" style="margin-top:6px">
+        <span><i style="background:#f59e0b"></i>Two-position</span>
+        <span><i style="background:#22d3ee"></i>Adaptive band</span>
+        <span><i style="background:#a78bfa"></i>Variable-speed (VFD)</span>
+        <span style="color:var(--ink-dim);font-size:11px">(shaded band = product's safe target range)</span>
+      </div>
+    </div>
+
     <div class="mverdict" style="margin-top:10px">
-      <b>How to read this:</b> "₹/kWh avg" is total cost ÷ total kWh for that mode — a mode that shifts load into off-peak/solar hours will show a lower blended rate even at the same base tariff. "Excursion severity" is °C·hours outside the product's target band (deviation size × time), not just a count — a brief large excursion and a long mild one can score similarly, which is the point: duration and severity both drive real spoilage. "Shelf-life consumed" is the change in worst-zone spoilage index (0–100) while that mode was active.
+      <b>How to read this:</b> "₹/kWh avg" is total cost ÷ total kWh for that mode — a mode that shifts load into off-peak/solar hours will show a lower blended rate even at the same base tariff. "Excursion severity" is °C·hours outside the product's target band (deviation size × time), not just a count — a brief large excursion and a long mild one can score similarly, which is the point: duration and severity both drive real spoilage. "Shelf-life consumed" is the change in worst-zone spoilage index (0–100) while that mode was active. The chart above is the same story moment-to-moment: all 3 modes see the exact same weather/tariff/deliveries, so any difference in their lines is entirely down to how each one controls the compressor.
     </div>
   </div>
 </div>
@@ -1480,6 +1493,12 @@ function freshShadowState(){
     doorOpen: false,           // mirrored from the live run each tick — a shared physical fact
     powerKW: [0.3,0.3,0.3],
     modeMetrics: freshModeMetrics(),  // only its own mode key is ever populated
+    // worst-zone temperature trajectory — this is the actual, visible proof
+    // that each mode's temperature genuinely diverges over time under
+    // identical environmental conditions, not just an aggregate stat. See
+    // renderCompareTempChart(). Same 360-tick (6h) window as the live view's
+    // own temperature chart.
+    tempHistory: [],
   };
 }
 
@@ -2298,6 +2317,8 @@ function tick(dtMin){
     const shKwh = sh.powerKW.reduce((a,b)=>a+b,0)*(dtMin/60);
     const shCost = shKwh*BASE_TARIFF*period.mult;
     accumulateModeMetrics(sh, shMd, dtMin, shKwh, shCost, period);
+    sh.tempHistory.push({ t: state.tMin, temp: Math.max(...sh.zoneTemp) });
+    if(sh.tempHistory.length>360) sh.tempHistory.shift();
   }
 
   // per-zone, per-day, per-tariff-period ledger — this is what the clickable
@@ -2890,6 +2911,50 @@ function drawLineChart(canvas, series, opts){
   }
 }
 
+// Overlays several named temperature series on one canvas, sharing one scale —
+// this is the actual visible proof that each controller mode's temperature
+// genuinely diverges over time under identical conditions, not just an
+// aggregate stat. seriesMap: { label: {values:[...], color:"#rrggbb"} }.
+// targetLine/bandLine draw the product's safe range as reference guides.
+function drawMultiLineChart(canvas, seriesMap, opts){
+  const dctx = canvas.getContext("2d");
+  const w = canvas.width = canvas.clientWidth * devicePixelRatio;
+  const h = canvas.height = canvas.clientHeight * devicePixelRatio;
+  dctx.clearRect(0,0,w,h);
+  const labels = Object.keys(seriesMap).filter(k=>seriesMap[k].values.length>=2);
+  if(labels.length===0) return;
+
+  const gridColor = "rgba(128,142,150,0.18)";
+  dctx.strokeStyle = gridColor; dctx.lineWidth=1;
+  for(let g=1; g<4; g++){ const y=h*(g/4); dctx.beginPath(); dctx.moveTo(0,y); dctx.lineTo(w,y); dctx.stroke(); }
+
+  const allVals = labels.flatMap(k=>seriesMap[k].values);
+  const min = opts.min !== undefined ? opts.min : Math.min(...allVals);
+  const max = opts.max !== undefined ? opts.max : Math.max(...allVals);
+  const range = (max-min)||1;
+  const yOf = v => h - ((v-min)/range)*h*0.86 - h*0.06;
+
+  // safe-band reference guides (target ± band), drawn first so lines sit on top
+  if(opts.target!==undefined && opts.band!==undefined){
+    dctx.fillStyle = "rgba(34,197,94,0.07)";
+    const yTop = yOf(opts.target+opts.band), yBot = yOf(opts.target-opts.band);
+    dctx.fillRect(0, Math.min(yTop,yBot), w, Math.abs(yBot-yTop));
+    dctx.strokeStyle = "rgba(34,197,94,0.4)"; dctx.setLineDash([3,3]); dctx.lineWidth=1*devicePixelRatio;
+    dctx.beginPath(); dctx.moveTo(0,yOf(opts.target)); dctx.lineTo(w,yOf(opts.target)); dctx.stroke();
+    dctx.setLineDash([]);
+  }
+
+  labels.forEach(label=>{
+    const { values, color } = seriesMap[label];
+    const n = values.length;
+    dctx.beginPath();
+    values.forEach((v,i)=>{ const x=(i/(n-1))*w, y=yOf(v); i===0?dctx.moveTo(x,y):dctx.lineTo(x,y); });
+    dctx.strokeStyle = color; dctx.lineWidth = 2*devicePixelRatio; dctx.stroke();
+    const lx=w, ly=yOf(values[n-1]);
+    dctx.beginPath(); dctx.arc(lx-3*devicePixelRatio,ly,2.6*devicePixelRatio,0,Math.PI*2); dctx.fillStyle=color; dctx.fill();
+  });
+}
+
 function renderCharts(){
   const hist = state.energyHistory;
   if(hist.length<2) return;
@@ -3209,6 +3274,7 @@ const TIPS = {
   "cmp:cycles":   "<b>Compressor cycles</b>How many times the compressor switched from off to on (or, in VFD mode, from idle to actively running), and how often per hour. More cycling wears out the motor faster in real equipment — this is a rough proxy for maintenance cost, not just an energy number.",
   "cmp:spoil":    "<b>Shelf-life consumed</b>How much the worst chamber's spoilage index (0-100) actually increased while this mode was running. Two modes can spend the same ₹ and still differ here — that's the whole point of comparing cost AGAINST temperature control instead of ranking by price alone.",
   "cmp:ai":       "<b>AI-based (planned)</b>A 4th mode, not yet implemented — see TODO.md §5 and CONTROL_IO.md Mode D. When built, it will run here as a 4th parallel shadow using only the same noisy telemetry/forecast the other modes could in principle use, so the comparison stays fair.",
+  "cmp:tempchart":"<b>Temperature over time, per mode</b>All 3 lines are exposed to the identical ambient temperature, tariff clock, and truck deliveries every tick — only the compressor control law differs between them. Watch how each one handles the same disturbance (e.g. a truck arriving) differently: tighter control (VFD) hugs the shaded safe band; looser control (Two-position, Adaptive during Peak) swings wider around it.",
   "head:clock":   "<b>Sim clock</b>The hands actually sweep at simulated speed — orange ring = daytime, blue ring = nighttime. This clock runs much faster than your real clock (see the Sim speed slider): a full lap of the minute hand can pass in a couple of real seconds.",
   "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
   "head:tariff":  tariffCardHTML(),
@@ -3498,6 +3564,24 @@ function renderCompare(){
     </tr>`;
   }).join("") + `<tr><td class="cmode" data-tip="cmp:ai">${MODE_LABEL.ai}</td><td colspan="8" style="color:var(--ink-dim)">not built yet — see TODO.md §5</td></tr>`;
   tbody.innerHTML = rows;
+
+  // The actual visible proof the 3 modes diverge under identical conditions —
+  // see drawMultiLineChart() and the "cmp:tempchart" hover for why this
+  // matters more than any single aggregate number in the table above.
+  const MODE_COLOR = { rule:"#f59e0b", adaptive:"#22d3ee", vfd:"#a78bfa" };
+  const seriesMap = {};
+  SHADOW_KEYS.forEach(modeKey=>{
+    seriesMap[modeKey] = {
+      values: shadowStates[modeKey].tempHistory.map(h=>h.temp),
+      color: MODE_COLOR[modeKey],
+    };
+  });
+  const band = cfg.product.band, target = cfg.product.target;
+  drawMultiLineChart(document.getElementById("compareTempChart"), seriesMap, {
+    min: target-band*3, max: target+band*6, target, band,
+  });
+  document.getElementById("compareTempMin").textContent = (target-band*3).toFixed(0);
+  document.getElementById("compareTempMax").textContent = (target+band*6).toFixed(0);
 }
 
 (function initCompareModal(){
