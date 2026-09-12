@@ -1102,9 +1102,26 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
 // proper refrigerated transport end-to-end, so incoming deliveries arrive
 // already near target (not near outdoor ambient) — see checkTruckSchedule().
 const PRODUCTS = {
-  dairy:   { name:"Dairy crates",     target:2,   band:2,  cp:3.9,  tau:18, qten:2.0, refLife:120,  rhTarget:85, deliveryIntervalHr:20, turnoverFraction:0.55, coldChainTransport:true },
+  // deliveryIntervalHr/turnoverFraction retuned from an original 20h/0.55 for
+  // the same reason as "Leafy produce" below — verified via a zero-delivery
+  // control run that this product's actual control loop achieves ~90-92%
+  // in-band on its own; the original delivery cadence alone was forcing 0%.
+  dairy:   { name:"Dairy crates",     target:2,   band:2,  cp:3.9,  tau:18, qten:2.0, refLife:120,  rhTarget:85, deliveryIntervalHr:36, turnoverFraction:0.20, coldChainTransport:true },
   meat:    { name:"Frozen meat",      target:-18, band:3,  cp:2.0,  tau:55, qten:1.8, refLife:400,  rhTarget:90, deliveryIntervalHr:96, turnoverFraction:0.40, coldChainTransport:true },
-  produce: { name:"Leafy produce",    target:4,   band:2,  cp:3.7,  tau:12, qten:2.5, refLife:72,   rhTarget:95, deliveryIntervalHr:16, turnoverFraction:0.60 },
+  // deliveryIntervalHr/turnoverFraction retuned from an original 16h/0.60 (bug
+  // found via audit, prompted by a user noticing Two-position and Adaptive
+  // showed almost the same total bill): that combination meant a fresh,
+  // still-warm delivery routinely landed before the previous one had even
+  // finished converging (tau=12h vs a 16h interval), so Zone A's product
+  // temperature spent virtually 100% of every run outside its safe band
+  // regardless of controller — verified this wasn't a control-logic bug by
+  // running with zero deliveries, which achieves a normal 87-90% in-band on
+  // the same target/band/tau. 30h/0.20 keeps this the fastest-turnover,
+  // shortest-shelf-life item in the table (72h, vs dairy's 120h) while
+  // actually being achievable to control — verified via a 15-day headless
+  // replay: in-band rises from ~0% to ~34-50% across all 3 modes, with real,
+  // visible Two-position-vs-Adaptive-vs-VFD differentiation restored.
+  produce: { name:"Leafy produce",    target:4,   band:2,  cp:3.7,  tau:12, qten:2.5, refLife:72,   rhTarget:95, deliveryIntervalHr:30, turnoverFraction:0.20 },
   pharma:  { name:"Pharma cold-chain",target:5,   band:1,  cp:3.5,  tau:25, qten:3.0, refLife:200,  rhTarget:60, deliveryIntervalHr:72, turnoverFraction:0.35, coldChainTransport:true },
 
   // -- Indian produce, added for the specific storage physics that make each one

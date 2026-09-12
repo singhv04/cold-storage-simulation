@@ -316,18 +316,10 @@ cutting Peak-period kWh substantially, e.g. tomato −35%, produce −19%, dairy
 genuinely lower than Two-position's, not just its Peak-hour slice, once the override was no longer
 suppressing the mechanism.)
 
-**Open question, NOT unilaterally fixed** (flagged for a decision, not a code defect): "Leafy
-produce" and, to a lesser extent, "Dairy crates" still show low in-band% because their delivery
-INTERVAL is shorter than or comparable to their thermal time constant (τ) — e.g. produce's 16h
-delivery interval vs 12h τ means a fresh (still-warm) delivery can arrive before the previous one has
-even finished converging, so the zone's average product temperature never really settles, regardless
-of controller. This may be intentionally realistic (fast-turnover leafy greens genuinely are hard to
-hold at tight temperature without a dedicated pre-cooling step — a real, well-documented cold-chain
-problem) rather than a bug to silently patch by changing product data. Options: (a) leave as an
-intentionally hard stress-test scenario and say so explicitly in the UI, (b) moderate "Leafy
-produce"'s `turnoverFraction`/`deliveryIntervalHr` to be less of an outlier vs. the rest of the table,
-or (c) add an explicit receiving-dock "pre-cool before put-away" process (a real facility feature)
-that isn't modeled at all right now. Left open for a product/scope decision.
+**RESOLVED (§4g):** the open question above was resolved after a user noticed Two-position and
+Adaptive showing nearly-identical total bills again and it traced back to exactly this — see §4g
+below for the fix (option (b): retuned `turnoverFraction`/`deliveryIntervalHr` for both "Leafy
+produce" and "Dairy crates").
 
 ## 4f. Second audit pass (prompted by "I still see a lot of bugs, deep dive and fix them")
 
@@ -366,6 +358,47 @@ reconciliation against the header's own totals, forecast-array sanity, open-even
 - [x] Verified (no bug found): a 30-day stress test that switches controller mode, product, AND
       season every 500 sim-minutes (much more aggressive than any real interactive session) produces
       no NaN/Infinity/instability in any of the live state or 3 parallel shadow states.
+
+## 4g. Resolved: "Leafy produce" / "Dairy crates" near-identical Two-position vs Adaptive cost
+
+The user flagged the exact live symptom this predicted: "Two-position (12601) and Adaptive (12542)
+having almost the same total bill... does it even make sense?" Traced the numbers to a ~15-day
+session on the app's DEFAULT product ("Leafy produce") — confirming this was the same open question
+left in §4e, now hitting the very first thing any new visitor sees.
+
+**Isolated the root cause cleanly**: ran the same product/season/duration with truck deliveries
+turned off entirely (`turnoverFraction: 0`) — the underlying control loop achieves a normal 87-90%
+in-band on its own for both products. The 0% seen in practice was ENTIRELY caused by
+`turnoverFraction`/`deliveryIntervalHr` being extreme outliers (produce: 0.60/16h against a 12h τ;
+dairy: 0.55/20h against an 18h τ) — a fresh, still-warm delivery routinely landed before the
+previous one had even finished converging, so Zone A's product temperature spent virtually all its
+time outside the safe band regardless of which of the 3 controllers was driving it — which is
+exactly why they all looked "the same": none of them could do anything about it.
+
+**Fix (option (b) from §4e, chosen because this is data-tuning, not new-feature scope):** retuned
+both products' delivery cadence to be less of an outlier vs. the rest of the table, while keeping
+each the fastest-turnover/shortest-shelf-life item in its category:
+- Leafy produce: `deliveryIntervalHr` 16h→30h, `turnoverFraction` 0.60→0.20 (refLife stays 72h — the
+  shortest shelf life in the table, still meaningfully "fast-turnover" vs. potato's 120h/0.30)
+- Dairy crates: `deliveryIntervalHr` 20h→36h, `turnoverFraction` 0.55→0.20
+
+**Verified via a 15-day headless replay of the real production code:**
+
+| Product | Two-position | Adaptive | VFD |
+|---|---|---|---|
+| Leafy produce (was 0.0% / 0.0% / 1.3%) | 28.5% | 30.6% | **47.1%** |
+| Dairy crates (was 0.0% / 0.0% / 7.7%) | 57.6% | 61.4% | **79.3%** |
+
+Real, visible Two-position-vs-Adaptive-vs-VFD differentiation now exists for both — matching the
+other 7 products already fixed. Re-ran the full 9-product sanity + bill-ledger-reconciliation check
+(§4f) against the retuned code: all 9 still PASS.
+
+**Noted, not further changed:** "Banana" shows naturally low and noisy in-band% (0.4%-15% across
+repeated runs with different random draws) due to the still-unresolved lack of seeded randomness
+(§2) — confirmed this is pre-existing variance, not a regression from this fix, and it still shows
+the same real relative differentiation between modes each run. Left alone since it wasn't the
+reported symptom and re-tuning every product's delivery cadence risks turning into unbounded scope
+creep — revisit only if it becomes a reported issue on its own.
 
 ## 5. NEW: AI-based control approach (4th mode)
 
