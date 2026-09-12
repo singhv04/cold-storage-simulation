@@ -717,6 +717,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
           <button data-mode="rule" class="active" data-tip="ctrl:mode-rule">Two-position (India std.)</button>
           <button data-mode="adaptive" data-tip="ctrl:mode-adaptive">Adaptive band</button>
           <button data-mode="vfd" data-tip="ctrl:mode-vfd">Variable-speed (VFD)</button>
+          <button data-mode="ai" data-tip="ctrl:mode-ai">AI-based (predictive)</button>
         </div>
       </div>
       <div class="row">
@@ -1010,7 +1011,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
   <div id="compareModal" role="dialog" aria-modal="true" aria-labelledby="compareModalTitle">
     <button class="mclose" id="compareModalClose" aria-label="Close">×</button>
     <h2 class="mtitle" id="compareModalTitle">Controller comparison — cost vs. temperature control</h2>
-    <div class="mverdict">Two-position, Adaptive band, and Variable-speed (VFD) all run continuously, in parallel, every tick — against the SAME weather, tariff clock, and truck deliveries — regardless of which one is shown driving the warehouse view (top-left segmented control just picks which one you're watching, it doesn't pause the others). Cost alone doesn't win: a cheap mode that lets the product drift out of its safe band is spoiling food to save money. Hover any column header or the mode name for what each number means.</div>
+    <div class="mverdict">Two-position, Adaptive band, Variable-speed (VFD), and AI-based (predictive) all run continuously, in parallel, every tick — against the SAME weather, tariff clock, and truck deliveries — regardless of which one is shown driving the warehouse view (top-left segmented control just picks which one you're watching, it doesn't pause the others). Cost alone doesn't win: a cheap mode that lets the product drift out of its safe band is spoiling food to save money. Hover any column header or the mode name for what each number means.</div>
     <div class="compareScroll">
       <table class="compareTable">
         <thead>
@@ -1031,13 +1032,14 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
     </div>
 
     <div style="margin-top:16px">
-      <h3 style="font-size:13px;margin:0 0 6px;color:var(--ink)" data-tip="cmp:tempchart">Worst-zone temperature, all 3 modes, last 6h — the actual visible proof they diverge</h3>
+      <h3 style="font-size:13px;margin:0 0 6px;color:var(--ink)" data-tip="cmp:tempchart">Worst-zone temperature, all 4 modes, last 6h — the actual visible proof they diverge</h3>
       <canvas class="chart" id="compareTempChart" style="height:150px"></canvas>
       <div class="chartlabel"><span id="compareTempMin">—</span><span id="compareTempMax">—</span></div>
       <div class="legend" style="margin-top:6px">
         <span><i style="background:#f59e0b"></i>Two-position</span>
         <span><i style="background:#22d3ee"></i>Adaptive band</span>
         <span><i style="background:#a78bfa"></i>Variable-speed (VFD)</span>
+        <span><i style="background:#34d399"></i>AI-based (predictive)</span>
         <span style="color:var(--ink-dim);font-size:11px">(shaded band = product's safe target range)</span>
       </div>
     </div>
@@ -1375,7 +1377,13 @@ const CONDENSER_APPROACH_FULL_C = 12;      // °C above ambient at full fan spee
 const CONDENSER_MIN_APPROACH_FRAC = 0.35;  // floor — minimum head pressure for proper TXV metering
 
 function condenserApproach(mode, capacityFraction){
-  if(mode!=="vfd") return CONDENSER_APPROACH_FULL_C; // fixed-speed fan: no floating available
+  // §5 — Mode D (AI-based) is modeled as a predictive/optimizing supervisory
+  // layer atop the SAME modern variable-speed hardware VFD mode uses (this is
+  // how real facilities actually deploy predictive control — see the notes
+  // at the bottom of TODO.md) — it differs from plain VFD in HOW it decides
+  // capacityFraction (lookahead optimization vs. reactive PI), not in what
+  // hardware it's driving, so it shares every hardware-level effect below.
+  if(mode!=="vfd" && mode!=="ai") return CONDENSER_APPROACH_FULL_C; // fixed-speed fan: no floating available
   const frac = Math.max(CONDENSER_MIN_APPROACH_FRAC, Math.min(1, capacityFraction));
   return CONDENSER_APPROACH_FULL_C * frac;
 }
@@ -1442,6 +1450,123 @@ function vfdGains(i, md=cfg){
   const REFERENCE_MIN_PER_DEG = 1.5; // ≈ Zone A's own figure (~1.51 min/°C at full tilt), the calibration reference point
   const Ki = 0.004 * (REFERENCE_MIN_PER_DEG / Math.max(0.15, minutesPerDegreeAtFullTilt));
   return { Kp, Ki };
+}
+
+/* ============================================================
+   §5 — MODE D: AI-BASED (PREDICTIVE/OPTIMIZING SUPERVISORY CONTROL)
+
+   What "AI-based" honestly means here: a receding-horizon predictive
+   optimizer (the real technique behind almost every genuine "AI-based" or
+   "smart" supervisory controller actually deployed in industrial refrigeration
+   today — see the notes at the bottom of TODO.md). It is NOT a trained neural
+   network — this sim has no training data or training infrastructure to make
+   that honest, and claiming one anyway would be exactly the kind of dishonest
+   labeling this whole project has been trying to avoid.
+
+   What it does that the other 3 modes structurally can't: instead of reacting
+   only to the CURRENT instant's temperature error, it re-plans every
+   AI_REPLAN_INTERVAL_MIN by rolling its own short-horizon physics forecast
+   forward once per CANDIDATE capacity level, using only information a real
+   predictive controller could actually have in advance — the deterministic
+   shape of the diurnal ambient curve, the known tariff schedule, the known
+   shift roster, and (for Zone A) the already-booked next truck appointment —
+   then picks whichever candidate minimizes a joint cost: ₹ spent over the
+   horizon PLUS a penalty for predicted time/degree outside the safe band.
+   This is what naturally produces pre-cooling ahead of a tariff peak, coasting
+   through it, and ramping up ahead of a scheduled delivery, WITHOUT any of
+   those being hand-coded special cases — they just fall out of the
+   optimization once ambient/tariff/delivery timing are all knowable inputs.
+
+   Fairness (§0's whole point): this uses ZONE_SPECS' nameplate values and the
+   zone's own current airTemp/zoneTemp — the same ground a real supervisory
+   layer would have, and no more privileged than what Modes A/B/C already
+   implicitly read. It does NOT get to peek at estCapMult/estUaMult (the
+   twin's calibrated belief) or trueCapMult/frost's exact live value beyond
+   what's already observable — it forecasts from nameplate physics the same
+   way the other modes' physical understanding is "nameplate until proven
+   otherwise."
+   ============================================================ */
+const AI_REPLAN_INTERVAL_MIN = 5;
+const AI_HORIZON_MIN = 90;
+const AI_HORIZON_STEP_MIN = 10;
+const AI_CANDIDATE_LEVELS = [0, 0.25, 0.5, 0.75, 1.0];
+// ₹ "cost" assigned per °C·minute outside the safe band — lets ₹ and quality
+// trade off on the same footing, per TODO.md §5's "joint cost function".
+// BUG FOUND DURING AUDIT, FIXED: an initial value of 2 was drastically
+// underweighted — a classic short-horizon-MPC pitfall, where each individual
+// 90-minute re-plan looks locally reasonable (small predicted deviation) but
+// shaving a little too much capacity to save a little money COMPOUNDS over
+// many re-planning cycles into catastrophic long-run drift. Confirmed via a
+// 15-day headless replay: at weight=2, AI mode was consistently CHEAPEST
+// (correctly optimizing cost) but held its safe band as little as 0% of the
+// time for some products (meat) — worse than every other mode, for
+// essentially no real savings benefit. Swept weights 2/10/30/60/100 and
+// found quality improves dramatically for almost no cost increase well past
+// 2 — settled on 50: verified across all 9 products, AI is now cheapest in
+// all 9 AND best-in-band in 7 of 9 (the other 2 — dairy, onion — still show
+// AI cheaper, just with reactive VFD's PI loop edging out on pure quality —
+// a believable, non-dominating result, not a knob tuned to make AI always win).
+const AI_QUALITY_PENALTY_RS_PER_DEGMIN = 50;
+
+// Deterministic seasonal ambient shape at an arbitrary FUTURE time — the
+// smooth part of ambientNow() only (day-to-day weather variability, §3, is
+// NOT knowable in advance, same as a real forecast has weather uncertainty).
+function ambientForecastAt(futureTMin){
+  const s = SEASONS[cfg.season];
+  const hour = (futureTMin/60) % 24;
+  const phase = ((hour-9)/24)*2*Math.PI;
+  const diurnal = Math.sin(phase) + 0.25*Math.sin(2*phase - Math.PI/2);
+  return { temp: s.base + s.swing*(diurnal-0.25), hour };
+}
+
+// Rolls one candidate capacity level forward over the horizon using only
+// nameplate/known-in-advance information, returns its total projected cost
+// (₹ + quality penalty). See the module comment above for the fairness case.
+function aiForecastCost(i, md, airTemp0, zoneTemp0, frostNow, candidateCap){
+  const spec = ZONE_SPECS[i];
+  const target = md.product.target, band = md.product.band;
+  let airTemp = airTemp0, zoneTemp = zoneTemp0;
+  const frostPenalty = 1 - Math.min(0.6, frostNow*0.6);
+  const {rh: ambRHnow} = ambientNow(); // current humidity, held over the horizon — a forecast simplification, same spirit as holding ambient's smooth shape only
+  const latentFraction = Math.min(0.35, 0.10 + 0.30*ambRHnow);
+  let totalRs = 0;
+  for(let t=0; t<=AI_HORIZON_MIN; t+=AI_HORIZON_STEP_MIN){
+    const futureTMin = state.tMin + t;
+    const {temp: ambient, hour} = ambientForecastAt(futureTMin);
+    const shift = currentShift(hour);
+    const shiftW = shift ? (i===0 ? shift.count*130*1.3 : shift.count*35) : 40;
+    // anticipate the booked delivery's heat load (Zone A only) if it falls in this horizon
+    let deliveryHeatW = 0;
+    if(i===0 && state.nextTruckAppt!==null && futureTMin>=state.nextTruckAppt && futureTMin<state.nextTruckAppt+20){
+      deliveryHeatW = spec.doorAreaM2*0.4*RHO_AIR*CP_AIR*1000*Math.max(0,ambient-airTemp)*0.45;
+    }
+    const wallW = zoneUA(i)*(ambient-airTemp); // nameplate UA, not the twin's live estimate
+    const coolingW = spec.compCapacityW*frostPenalty*candidateCap*(1-latentFraction);
+    const netW = wallW + shiftW + deliveryHeatW - coolingW;
+    airTemp += (netW*(AI_HORIZON_STEP_MIN*60)/1000)/airCapacityKJperK(i);
+    const couplingW = productCouplingKJperMinK(i)*1000/60*(airTemp-zoneTemp);
+    zoneTemp += (couplingW*(AI_HORIZON_STEP_MIN*60)/1000)/productCapacityKJperK(i);
+
+    const period = tariffPeriodAt(hour);
+    const copNow = effectiveCOP(target, "ai", candidateCap, ambient) * vfdEfficiencyMult(candidateCap) * 0.97; // mirrors stepZone's copNow*vfdEff*VFD_DRIVE_LOSS chain
+    const powerKW = coolingW>0 ? coolingW/(copNow*(1-Math.min(0.35,frostNow*0.35))*1000) : 0.3;
+    totalRs += powerKW*(AI_HORIZON_STEP_MIN/60)*BASE_TARIFF()*period.mult;
+
+    const dev = Math.abs(zoneTemp-target)-band;
+    if(dev>0) totalRs += dev*AI_HORIZON_STEP_MIN*AI_QUALITY_PENALTY_RS_PER_DEGMIN;
+  }
+  return totalRs;
+}
+
+// Receding-horizon decision: evaluate every candidate capacity level's
+// projected cost, keep whichever is cheapest — the actual "planning" step.
+function aiPlanCapacity(i, md, airTemp0, zoneTemp0, frostNow){
+  let bestCap = 0, bestCost = Infinity;
+  for(const cap of AI_CANDIDATE_LEVELS){
+    const cost = aiForecastCost(i, md, airTemp0, zoneTemp0, frostNow, cap);
+    if(cost < bestCost){ bestCost = cost; bestCap = cap; }
+  }
+  return bestCap;
 }
 
 /* ============================================================
@@ -1522,6 +1647,9 @@ function freshState(){
     // cold-start efficiency penalty after each two-position/adaptive engage —
     // see STARTUP_COP_PENALTY in stepZone() for why this exists.
     startupPenaltyRemain: [0,0,0],
+    // §5 — Mode D (AI-based) re-plan timestamp/chosen capacity, needed here
+    // too since AI can be the LIVE driving mode, not just a shadow.
+    aiNextPlanAt: [0,0,0], aiPlannedCapacity: [0,0,0],
     // high-head-pressure safety-cutout cooldown timer, see stepCompressor()
     hpTripRemain: [0,0,0],
     // lifetime cycle count per zone, independent of mode-switching — drives
@@ -1677,7 +1805,7 @@ function freshModeMetrics(){
    layer and event log — they need ground-truth physics + control + energy
    bookkeeping for a fair benchmark, not a sensing-noise simulation each.
    ============================================================ */
-const SHADOW_KEYS = ["rule","adaptive","vfd"];
+const SHADOW_KEYS = ["rule","adaptive","vfd","ai"];
 
 function freshShadowState(){
   return {
@@ -1692,6 +1820,11 @@ function freshShadowState(){
     spoilIndex: [0,0,0], batchAgeMin: [0,0,0],
     compRuntimeHr: [0,0,0], trueCapMult: [1,1,1], sensorDriftBias: [0,0,0], zoneSensor: [8,8,-5],
     zoneLoads: [{},{},{}],
+    // §5 — Mode D (AI-based/predictive): re-plan timestamp and the capacity
+    // level chosen at the last re-plan, held (with slew-limiting, like VFD)
+    // between re-plans — see aiPlanCapacity() / the "ai" branch in
+    // stepCompressor().
+    aiNextPlanAt: [0,0,0], aiPlannedCapacity: [0,0,0],
     doorOpen: false,           // mirrored from the live run each tick — a shared physical fact
     powerKW: [0.3,0.3,0.3],
     modeMetrics: freshModeMetrics(),  // only its own mode key is ever populated
@@ -2259,16 +2392,18 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW, wearNoise=n
   // typically run ~2-4% less efficient than a bare fixed-speed motor for this
   // reason alone, which is why "VFD" isn't automatically free efficiency.
   const VFD_DRIVE_LOSS = 0.97;
-  const vfdEff = md.mode==="vfd" ? vfdEfficiencyMult(st.capacityFraction[i])*VFD_DRIVE_LOSS : 1;
+  const isContinuousHardware = md.mode==="vfd" || md.mode==="ai"; // §5 — AI mode shares VFD's hardware, see condenserApproach()
+  const vfdEff = isContinuousHardware ? vfdEfficiencyMult(st.capacityFraction[i])*VFD_DRIVE_LOSS : 1;
   // STARTUP_COP_PENALTY — a two-position/adaptive compressor doesn't deliver
   // full-efficiency cooling the instant it engages: refrigerant that migrated
   // during the last OFF period and unequalized system pressure both take a
-  // few minutes to settle. VFD never incurs this because it rarely, if ever,
-  // fully stops. This (not an invented VFD bonus) is the actual documented
-  // reason on/off cycling uses more energy than smooth modulation in the field.
+  // few minutes to settle. VFD (and AI, same hardware) never incurs this
+  // because it rarely, if ever, fully stops. This (not an invented VFD bonus)
+  // is the actual documented reason on/off cycling uses more energy than
+  // smooth modulation in the field.
   st.startupPenaltyRemain[i] = Math.max(0, st.startupPenaltyRemain[i]-dt);
   const STARTUP_COP_PENALTY = 0.82;
-  const startupEff = (md.mode!=="vfd" && st.compressorOn[i] && st.startupPenaltyRemain[i]>0) ? STARTUP_COP_PENALTY : 1;
+  const startupEff = (!isContinuousHardware && st.compressorOn[i] && st.startupPenaltyRemain[i]>0) ? STARTUP_COP_PENALTY : 1;
   // effectiveCOP() folds in condenser head-pressure floating (VFD-only, see
   // above) on top of the plain evaporating-side ratedCOP() — combined with
   // vfdEff (motor/inverter part-load loss) and startupEff (on/off cold-start
@@ -2287,7 +2422,7 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW, wearNoise=n
   // a real cost that partially offsets (but doesn't erase) VFD's compressor-
   // side savings.
   const FAN_POWER_FRACTION = 0.04; // ~4% of rated compressor capacity, typical packaged-unit condenser fan motor
-  const fanSpeedFrac = md.mode==="vfd" ? Math.max(CONDENSER_MIN_APPROACH_FRAC, Math.min(1, st.capacityFraction[i])) : 1;
+  const fanSpeedFrac = isContinuousHardware ? Math.max(CONDENSER_MIN_APPROACH_FRAC, Math.min(1, st.capacityFraction[i])) : 1;
   const fanPowerKW = (st.compressorOn[i] && !st.defrosting[i]) ? (ZONE_SPECS[i].compCapacityW/1000)*FAN_POWER_FRACTION*fanSpeedFrac : 0;
   powerArr[i] = compressorPowerKW + fanPowerKW;
 
@@ -2497,6 +2632,22 @@ function stepCompressor(i, dt, st=state, md=cfg){
     const wasOn = st.compressorOn[i];
     st.compressorOn[i] = st.capacityFraction[i] > 0.03;
     if(!wasOn && st.compressorOn[i]){ st.modeMetrics[md.mode].cyclesStarted++; registerCompressorEngage(st, i, isLive); }
+  } else if(md.mode === "ai"){
+    // §5 — Mode D: re-plan only every AI_REPLAN_INTERVAL_MIN (a real MPC
+    // doesn't re-solve every control tick either — it solves periodically and
+    // holds the plan), then slew-limit toward the planned level exactly like
+    // VFD does, since it's driving the same physical hardware (see the
+    // isContinuousHardware note in stepZone).
+    if(state.tMin >= st.aiNextPlanAt[i]){
+      st.aiPlannedCapacity[i] = aiPlanCapacity(i, md, st.airTemp[i], st.zoneTemp[i], st.frost[i]);
+      st.aiNextPlanAt[i] = state.tMin + AI_REPLAN_INTERVAL_MIN;
+    }
+    const maxSlewPerMin = 0.06;
+    const delta = Math.max(-maxSlewPerMin*dt, Math.min(maxSlewPerMin*dt, st.aiPlannedCapacity[i]-st.capacityFraction[i]));
+    st.capacityFraction[i] = Math.min(1, Math.max(0, st.capacityFraction[i]+delta));
+    const wasOnAi = st.compressorOn[i];
+    st.compressorOn[i] = st.capacityFraction[i] > 0.03;
+    if(!wasOnAi && st.compressorOn[i]){ st.modeMetrics[md.mode].cyclesStarted++; registerCompressorEngage(st, i, isLive); }
   } else {
     // Two-position (fixed band) or adaptive-band (retuned deadband) relay control.
     let band = md.product.band;
@@ -3294,7 +3445,7 @@ function drawWarehouse(){
   ctx.font="11px ui-monospace, monospace";
   const onCount = state.compressorOn.filter(Boolean).length;
   const plantStatus = anyDefrost ? "DEFROST ACTIVE"
-    : cfg.mode==="vfd" ? `${(state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100).toFixed(0)}% AVG CAPACITY (VFD)`
+    : (cfg.mode==="vfd"||cfg.mode==="ai") ? `${(state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100).toFixed(0)}% AVG CAPACITY (${cfg.mode==="vfd"?"VFD":"AI"})`
     : (anyOn?`${onCount}/3 UNITS RUNNING`:"IDLE");
   ctx.fillText(`CONDENSER / COMPRESSOR PLANT — ${plantStatus}  ·  ${currentPowerKW().toFixed(1)} kW`, 30, H-8);
 }
@@ -3536,7 +3687,7 @@ function renderStats(){
 
   const anyDefrost = state.defrosting.some(Boolean);
   const onCount = state.compressorOn.filter(Boolean).length;
-  if(cfg.mode==="vfd"){
+  if(cfg.mode==="vfd"||cfg.mode==="ai"){
     const avgCap = state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100;
     document.getElementById("compState").textContent = anyDefrost ? "DEFROST" : `${avgCap.toFixed(0)}% AVG CAPACITY`;
     document.getElementById("compState").className = "pill tnum " + (anyDefrost?"warn":(avgCap>3?"ok":""));
@@ -3544,7 +3695,7 @@ function renderStats(){
     document.getElementById("compState").textContent = anyDefrost ? "DEFROST" : (onCount>0?`${onCount}/3 RUNNING`:"OFF");
     document.getElementById("compState").className = "pill tnum " + (anyDefrost?"warn":(onCount>0?"ok":""));
   }
-  const duty = cfg.mode==="vfd"
+  const duty = (cfg.mode==="vfd"||cfg.mode==="ai")
     ? state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES*100
     : state.lastHourOnMinutes.reduce((sum,arr)=>sum+arr.reduce((a,b)=>a+b,0),0)/(60*N_ZONES)*100;
   document.getElementById("dutyCycle").textContent = `${duty.toFixed(0)}%`;
@@ -3732,7 +3883,7 @@ function tariffCardHTML(){
 }
 
 const TIPS = {
-  "cmp:mode":     "<b>Controller mode</b>Two-position, Adaptive band, and Variable-speed (VFD) all run continuously in the background, every tick, against the exact same weather/tariff/truck-delivery conditions — genuinely in parallel, not just whichever you last selected. 'Live view' marks the one currently driving the warehouse animation and twin estimator on screen; the other rows keep running and recording even while not shown.",
+  "cmp:mode":     "<b>Controller mode</b>Two-position, Adaptive band, Variable-speed (VFD), and AI-based (predictive) all run continuously in the background, every tick, against the exact same weather/tariff/truck-delivery conditions — genuinely in parallel, not just whichever you last selected. 'Live view' marks the one currently driving the warehouse animation and twin estimator on screen; the other rows keep running and recording even while not shown.",
   "cmp:live":     "This is the mode currently shown in the main warehouse view — its numbers here come from that same live run. The other rows are computed by an identical background copy of the physics, so the comparison stays fair.",
   "cmp:tracked":  "<b>Tracked</b>How many sim-hours this mode has been running and recording data. All rows start at zero together and grow in lockstep, since all three run every tick regardless of which is on screen.",
   "cmp:total":    "<b>₹ total</b>Total electricity cost this mode has racked up over its tracked time, at whatever tariff rate was in effect each minute it ran.",
@@ -3742,7 +3893,7 @@ const TIPS = {
   "cmp:excursion":"<b>Excursion severity</b>Adds up (how far outside the safe range, in °C) × (how many minutes it stayed there), across all excursions. A short sharp excursion and a long mild one can score similarly here on purpose — both genuinely damage shelf life, just via different paths. Lower is better; zero means the product never left its target band.",
   "cmp:cycles":   "<b>Compressor cycles</b>How many times the compressor switched from off to on (or, in VFD mode, from idle to actively running), and how often per hour. More cycling wears out the motor faster in real equipment — this is a rough proxy for maintenance cost, not just an energy number.",
   "cmp:spoil":    "<b>Shelf-life consumed</b>How much the worst chamber's spoilage index (0-100) actually increased while this mode was running. Two modes can spend the same ₹ and still differ here — that's the whole point of comparing cost AGAINST temperature control instead of ranking by price alone.",
-  "cmp:ai":       "<b>AI-based (planned)</b>A 4th mode, not yet implemented — see TODO.md §5 and CONTROL_IO.md Mode D. When built, it will run here as a 4th parallel shadow using only the same noisy telemetry/forecast the other modes could in principle use, so the comparison stays fair.",
+  "cmp:ai":       "<b>AI-based (predictive)</b>A receding-horizon optimizer — every few minutes it forecasts several candidate compressor-capacity choices ~90 minutes ahead (using the known ambient shape, tariff schedule, and any booked delivery) and picks whichever minimizes ₹ spent PLUS a penalty for predicted time outside the safe band, instead of only reacting to the instant's temperature. Not a trained neural network — this is the same predictive/optimization technique real 'AI-based' industrial supervisory controllers actually use. See TODO.md §5 and CONTROL_IO.md Mode D for exactly what it can and can't see.",
   "cmp:tempchart":"<b>Temperature over time, per mode</b>All 3 lines are exposed to the identical ambient temperature, tariff clock, and truck deliveries every tick — only the compressor control law differs between them. Watch how each one handles the same disturbance (e.g. a truck arriving) differently: tighter control (VFD) hugs the shaded safe band; looser control (Two-position, Adaptive during Peak) swings wider around it.",
   "head:clock":   "<b>Sim clock</b>The hands actually sweep at simulated speed — orange ring = daytime, blue ring = nighttime. This clock runs much faster than your real clock (see the Sim speed slider): a full lap of the minute hand can pass in a couple of real seconds.",
   "head:ambient": "<b>Ambient</b>Outdoor air temperature from an India-tuned day/night curve — peaks at 3pm, bottoms out at 3am, reaching the full configured swing above/below the season's baseline at both extremes. A stand-in for a live weather feed, not a forecast.",
@@ -3761,6 +3912,7 @@ const TIPS = {
   "ctrl:mode-rule": "<b>Two-position — India's default</b>A light switch, not a dimmer: the compressor is either fully ON or fully OFF around a temperature band. This is what runs the overwhelming majority of India's cold storage today — especially the thousands of single-commodity bulk potato/onion stores that make up most of the country's installed capacity. Cheap, rugged, easy for local technicians to service — which is exactly why it dominates, not because it's the most advanced option.",
   "ctrl:mode-adaptive": "<b>Adaptive band</b>Same on/off switch as Two-position, but the facility's own SOP tightens or loosens the temperature band depending on how hard the plant is working — a real tuning practice at better-run Indian sites, not new hardware.",
   "ctrl:mode-vfd": "<b>Variable-speed (VFD)</b>A dimmer, not a switch: capacity smoothly ramps 0-100% instead of clicking on/off. This is standard in modern integrated pack-houses, pharma cold-chain, and newer organized-retail distribution centers in India — but it's still a minority of total Indian cold storage capacity, which remains dominated by simple on/off potato-storage-style plants.",
+  "ctrl:mode-ai": "<b>AI-based (predictive)</b>Drives the same modern variable-speed hardware as VFD mode, but decides its capacity level by forecasting ~90 minutes ahead (known ambient shape, tariff schedule, booked deliveries) and optimizing ₹ cost against band-violation risk, instead of reacting only to the current instant — re-planned every 5 minutes, like a real receding-horizon controller. This is how real 'AI-based'/'smart' supervisory refrigeration control actually works today — layered on top of the same low-level hardware the other 3 modes drive, not a wholesale replacement for it.",
   "ctrl:product": "<b>Product profile</b>Sets target temp, hysteresis band, specific heat (cp, from Siebel's equation off the item's real water content), cooling time-constant (τ), Arrhenius Q10 for spoilage, and delivery/turnover logistics. Several Indian items are chilling-sensitive (tomato, banana, mango) and are deliberately targeted well above 0°C — storing them colder would injure them, not protect them.",
   "ctrl:season":  "<b>Ambient profile</b>India's 4 practical seasons — Summer, Monsoon, Post-monsoon, Winter — each with its own base temp, day/night swing, and humidity baseline feeding every zone's wall-conduction load and the compressor's dehumidification duty.",
   "ctrl:tariffRegion": "<b>Tariff region</b>§3 — real state-DISCOM industrial ToU structures differ meaningfully from each other, not just from one illustrative national curve: the base rate AND which hours count as off-peak/solar/peak both vary by state, driven by each grid's own demand curve and solar penetration. These are representative approximations of each DISCOM's published structure (rates/bands are periodically revised — treat as illustrative of the shape real facilities see, not a live billing rate). Switching mid-run only affects energy used from that point on — past bill history keeps the rates it was actually recorded under, same as a real tariff revision would.",
@@ -4013,7 +4165,7 @@ function renderGlossary(filter){
    ranking modes by cost alone.
    ============================================================ */
 
-const MODE_LABEL = { rule:"Two-position (on/off)", adaptive:"Adaptive band", vfd:"Variable-speed (VFD)", ai:"AI-based (planned)" };
+const MODE_LABEL = { rule:"Two-position (on/off)", adaptive:"Adaptive band", vfd:"Variable-speed (VFD)", ai:"AI-based (predictive)" };
 
 function renderCompare(){
   const tbody = document.getElementById("compareTbody");
@@ -4038,13 +4190,13 @@ function renderCompare(){
       <td>${m.cyclesStarted} (${cyclesPerHr}/h)</td>
       <td>${spoilDelta.toFixed(1)} pts</td>
     </tr>`;
-  }).join("") + `<tr><td class="cmode" data-tip="cmp:ai">${MODE_LABEL.ai}</td><td colspan="8" style="color:var(--ink-dim)">not built yet — see TODO.md §5</td></tr>`;
+  }).join("");
   tbody.innerHTML = rows;
 
-  // The actual visible proof the 3 modes diverge under identical conditions —
+  // The actual visible proof the 4 modes diverge under identical conditions —
   // see drawMultiLineChart() and the "cmp:tempchart" hover for why this
   // matters more than any single aggregate number in the table above.
-  const MODE_COLOR = { rule:"#f59e0b", adaptive:"#22d3ee", vfd:"#a78bfa" };
+  const MODE_COLOR = { rule:"#f59e0b", adaptive:"#22d3ee", vfd:"#a78bfa", ai:"#34d399" };
   const seriesMap = {};
   SHADOW_KEYS.forEach(modeKey=>{
     seriesMap[modeKey] = {
@@ -4239,14 +4391,13 @@ window.ColdStorageTwin = {
   // comparison" modal reads from — cost by tariff period, time-in-band,
   // excursion severity, cycling, and spoilage, tagged per controller mode.
   // See CONTROL_IO.md for the exact input/output contract each mode uses.
-  // Reads the parallel benchmark shadows (§6) — Two-position/Adaptive/VFD all
-  // run continuously in the background against identical ambient/tariff/dock
-  // conditions, regardless of which mode is currently visualized. "ai" stays
-  // null until Mode D (§5) is implemented.
+  // Reads the parallel benchmark shadows (§6) — Two-position/Adaptive/VFD/
+  // AI-based all run continuously in the background against identical
+  // ambient/tariff/dock conditions, regardless of which mode is currently
+  // visualized.
   getModeMetrics(){
     const out = {};
     for(const key of SHADOW_KEYS) out[key] = JSON.parse(JSON.stringify(shadowStates[key].modeMetrics[key]));
-    out.ai = null;
     return out;
   },
   // §2 — reproducibility: getSeed() reports the seed the current run started

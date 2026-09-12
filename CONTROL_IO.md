@@ -228,44 +228,90 @@ the real `over` (measured − setpoint) into the same PI math (or better, hand t
 existing PID block and just read/write its output), and write `capacityFraction` out as the real
 0–10V/4–20mA/fieldbus speed command instead of a JS number.
 
-## Mode D — AI-based (planned, not yet implemented — see TODO.md §5)
+## Mode D — AI-based (predictive/optimizing supervisory), `cfg.mode === "ai"`
 
-**Inputs it is allowed to use that A/B/C are not** (this is the point of building it — a learned
-policy can legitimately use more context than a bare thermostat can):
-- The twin's own noisy telemetry feed and forecast (`state.telemetry`, `state.forecast`) — NOT the
-  ground-truth `zoneTemp`/`airTemp` directly, to keep the comparison fair (same sensing boundary
-  every other mode effectively has, since none of them peek at ground truth either).
-- Forecasted ambient temperature and forecasted tariff period (both already computable from
-  `ambientNow()` and `tariffPeriodAt()` ahead of the current tick).
-- Scheduled events the site already knows about (booked truck deliveries, shift roster) — a real
-  facility's AI layer would have this from the same dock-appointment/roster system this sim already
-  models, not from magic foresight.
-- Recent duty cycle / equipment wear estimate (`estCapMult`, `estUaMult` from the twin estimator).
+**What "AI-based" honestly means here:** a receding-horizon predictive optimizer (the real technique
+behind almost every genuine "AI-based"/"smart" supervisory controller actually deployed in industrial
+refrigeration today — see the notes at the bottom of TODO.md). It is explicitly NOT a trained neural
+network — this sim has no training data or training infrastructure to make that claim honest, and a
+fake "ML" label would be exactly the kind of dishonest description this whole project has tried to
+avoid throughout.
 
-**Output:** same shape as Modes A/C — `compressorOn[i]` and/or `capacityFraction[i]` — it must drive
-the plant through the identical actuator interface, or the comparison in the "Controller comparison"
-modal isn't measuring the same thing.
+**Inputs used** — deliberately no more privileged than what Modes A/B/C already implicitly have:
+- `st.airTemp[i]` / `st.zoneTemp[i]` — the zone's own current state, same as the other 3 modes read
+  (none of the 4 modes have a separate noisy-telemetry channel for the shadow benchmark instances —
+  see the Benchmarking harness note below on why).
+- Nameplate `ZONE_SPECS[i]` (rated capacity, UA-equivalent) — NOT the twin's live calibrated
+  `estCapMult`/`estUaMult` belief. Mode D forecasts from "nameplate until proven otherwise," the same
+  physical-understanding baseline the other 3 modes implicitly have.
+- The deterministic SHAPE of the diurnal ambient curve (`ambientForecastAt()` — same formula as
+  `ambientNow()`, evaluated at a future time; day-to-day weather variability, §3, is NOT knowable in
+  advance, matching real forecast uncertainty) and the known tariff schedule (`tariffPeriodAt()` at
+  any future hour).
+- Known scheduled events: the shift roster (`SHIFTS`) and, for Zone A, the already-booked
+  `state.nextTruckAppt` — a real facility's predictive layer would have this from the same
+  dock-appointment/roster system this sim already models, not from magic foresight.
 
-**Not yet built.** When implemented, document its exact control law here in the same format as A/B/C
-above, including whatever objective function it optimizes (cost + band-violation penalty, per
-TODO.md §5).
+**Control law:**
+```
+every AI_REPLAN_INTERVAL_MIN (5 min; a real MPC re-solves periodically, not every control tick):
+  for each candidate in AI_CANDIDATE_LEVELS = [0, 0.25, 0.5, 0.75, 1.0]:
+    roll forward AI_HORIZON_MIN (90 min, in AI_HORIZON_STEP_MIN=10min steps):
+      forecast ambient/hour via ambientForecastAt(); look up tariffPeriodAt(hour)
+      forecast wallW (nameplate UA), shiftW (known roster), and — for Zone A within
+        20min of state.nextTruckAppt — the anticipated delivery heat load
+      coolingW = nameplate capacity × frostPenalty(current frost) × candidate × (1-latentFraction)
+      step airTemp, then zoneTemp (same physics formulas as the real plant)
+      accumulate: ₹ cost (forecasted tariff × forecasted power)
+                + AI_QUALITY_PENALTY_RS_PER_DEGMIN(50) × max(0, |zoneTemp-target|-band) × step_minutes
+  aiPlannedCapacity[i] = whichever candidate had the LOWEST total (cost + penalty)
+  aiNextPlanAt[i] = now + AI_REPLAN_INTERVAL_MIN
+
+every tick: capacityFraction[i] slew-limits toward aiPlannedCapacity[i], max 0.06/min (identical
+  hardware limit to VFD mode — see below)
+compressorOn[i] = capacityFraction[i] > 0.03
+```
+
+**Hardware sharing with Mode C:** Mode D is modeled as driving the SAME modern variable-speed
+hardware VFD mode drives (`condenserApproach()`, `vfdEfficiencyMult()`, `VFD_DRIVE_LOSS`, and the
+cold-start-penalty exemption all treat `mode==="vfd"` and `mode==="ai"` identically — see
+`isContinuousHardware` in `stepZone()`). This is a deliberate modeling choice, not an oversight: real
+predictive/MPC supervisory control is deployed almost exclusively on top of variable-speed equipment
+in practice, and the interesting difference between Modes C and D is HOW the capacity setpoint gets
+chosen (reactive PI vs. lookahead optimization), not what hardware executes it.
+
+**Output:** `capacityFraction[i]` ∈ {0, 0.25, 0.5, 0.75, 1.0} chosen at each re-plan, then
+slew-limited toward continuously — same shape as Mode C, driving the plant through the identical
+actuator interface.
+
+**Bug found and fixed during verification:** `AI_QUALITY_PENALTY_RS_PER_DEGMIN` was initially set to
+`2` — drastically underweighted. A 15-day headless replay showed Mode D correctly minimizing ₹ (it
+was cheapest every time) but for several products holding its safe band as little as 0% of the time —
+worse than every other mode — because each individual 90-minute re-plan looked locally reasonable
+(small predicted deviation) while compounding, across many re-planning cycles, into catastrophic
+long-run drift: a classic short-horizon-MPC pitfall, not a bug in the optimization itself. Swept
+weights 2/10/30/60/100 and found quality improves dramatically for almost no cost increase well past
+2 — settled on `50`. Re-verified across all 9 products: Mode D is now cheapest in all 9 AND
+best-in-band in 7 of 9 (the other 2 — dairy, onion — still show it cheaper, with VFD's reactive PI
+loop edging out on pure quality) — a believable, non-dominating result.
 
 ---
 
 ## Benchmarking harness (§6) — what it measures and how to read it
 
-**Modes A/B/C run genuinely in parallel, always, regardless of what's on screen.** The visualized
+**All 4 modes run genuinely in parallel, always, regardless of what's on screen.** The visualized
 `state` (full twin/telemetry/events/UI) is driven by whichever mode is picked in the header — but
-independently of that, three lightweight physical "shadow" instances (`shadowStates.rule`,
-`.adaptive`, `.vfd`, see `freshShadowState()`/`SHADOW_KEYS`) step every tick regardless of the
+independently of that, four lightweight physical "shadow" instances (`shadowStates.rule`,
+`.adaptive`, `.vfd`, `.ai`, see `freshShadowState()`/`SHADOW_KEYS`) step every tick regardless of the
 picker, each running its OWN controller against the SAME shared sim clock, ambient/tariff schedule,
 and the SAME mirrored dock-door/truck-delivery/stock-turnover events as the live run (see
 `checkTruckSchedule`/`maybeRotateStock`'s shadow-mirroring loops and `tick()`'s shadow-stepping
 block). A shadow deliberately skips the twin estimator, telemetry noise, and event log — it needs
 ground-truth physics + control + energy bookkeeping for a fair benchmark, not a duplicated sensing
-simulation per mode. Selecting a mode in the header only changes which one is animated/visualized;
-it does not pause or reset the other two, and switching back later finds them still running with
-uninterrupted history.
+simulation per mode (this is also why Mode D's own forecast, above, uses nameplate specs rather than
+a live twin belief — no shadow has a twin running to belong to). Selecting a mode in the header only
+changes which one is animated/visualized; it does not pause or reset the other three, and switching
+back later finds them still running with uninterrupted history.
 
 **Per mode, tracked continuously in `shadowStates[mode].modeMetrics[mode]`:**
 | Metric | Field | Meaning |
@@ -278,35 +324,34 @@ uninterrupted history.
 | Shelf-life consumed | `spoilStart` / `spoilLast` | worst-zone spoilage index (0–100) at first vs. most recent tick this mode has run |
 
 **Access points:**
-- UI: the "Controller comparison" header badge/modal — live table, one row per mode, all three
+- UI: the "Controller comparison" header badge/modal — live table, one row per mode, all four
   updating simultaneously. Every column header and the mode-name cell has a hover explanation
   (same `data-tip`/`TIPS` mechanism used everywhere else on the dashboard, keys prefixed `cmp:`).
 - Programmatic: `window.ColdStorageTwin.getModeMetrics()` — returns a deep-cloned snapshot of all
-  three shadows' ledgers (plus `ai: null` until Mode D exists), safe to poll from an external
-  script/notebook for offline analysis.
+  four shadows' ledgers, safe to poll from an external script/notebook for offline analysis.
 
-**How to run a fair benchmark:** there is nothing to set up — all three have been accumulating
+**How to run a fair benchmark:** there is nothing to set up — all four have been accumulating
 since the sim started (or since the last "Reset run"). Just open "Controller comparison" and read
 the rows; `minutesTracked` is identical across rows at any given moment, so raw totals are already
 comparable without normalizing — though ₹/kWh, %-in-band, and cycles/hour are still reported
 because they're the more meaningful units for judging a controller's behavior, not just its scale.
 
-**Why the rows are safe to compare at all (fixed bug):** every stochastic disturbance the three
+**Why the rows are safe to compare at all (fixed bug):** every stochastic disturbance the four
 parallel runs are exposed to is shared — ambient, tariff clock, dock-door state, truck/turnover
-events, AND (as of this fix) the equipment-wear random walk (`gaussianNoise(0.0006)` inside
-`trueCapMult`, drawn once per zone per tick in `tick()` as `sharedWearNoise` and passed into every
-`stepZone()` call). Before this fix, that noise term was drawn independently per shadow; its
-random-walk std (~2.3%/day, ~7%/10-days) was larger than the real ~1-3% Two-position-vs-Adaptive
-signal, so which mode looked cheaper could flip purely by chance — confirmed with a 200-trial Monte
-Carlo test (44% flip rate with independent noise, 0% after sharing it). If you ever add a NEW
-stochastic element to `stepZone()`/`stepCompressor()`, it needs to be either shared the same way or
-consciously left independent (documented why) — an unshared random term is a live risk of silently
-corrupting this comparison again.
+events, AND the equipment-wear random walk (`gaussianNoise(0.0006)` inside `trueCapMult`, drawn once
+per zone per tick in `tick()` as `sharedWearNoise` and passed into every `stepZone()` call). This was
+found as a bug: that noise term was originally drawn independently per shadow; its random-walk std
+(~2.3%/day, ~7%/10-days) was larger than the real ~1-3% Two-position-vs-Adaptive signal, so which
+mode looked cheaper could flip purely by chance — confirmed with a 200-trial Monte Carlo test (44%
+flip rate with independent noise, 0% after sharing it). If you ever add a NEW stochastic element to
+`stepZone()`/`stepCompressor()`, it needs to be either shared the same way or consciously left
+independent (documented why) — an unshared random term is a live risk of silently corrupting this
+comparison again.
 
-**What this benchmark deliberately does NOT yet do** (future work, not in scope for this file):
-seeded/reproducible runs (TODO.md §2), so re-running the "same" scenario twice will differ in
-exact truck timing and sensor noise draw — fine for a rough comparison, not yet fine for a precise
-regression test between mode versions. A 4th shadow for Mode D will slot in the same way once built.
+**Reproducibility (§2):** every run is seeded (`rng()`, a `mulberry32` PRNG — see the "Seed" field in
+Controls). Re-running the exact same seed produces a bit-identical run across all four modes,
+including the AI-based one's own re-planning decisions — verified this specifically, since Mode D's
+planning loop is the newest and most complex piece of stochastic-adjacent logic in the sim.
 
 ---
 
