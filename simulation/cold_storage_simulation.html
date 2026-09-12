@@ -1165,6 +1165,49 @@ function zoneUA(i){ return ZONE_SPECS[i].envelopeArea * U_VALUE; } // W/K, overa
 // industry heuristic, not a manufacturer curve.
 function ratedCOP(target){ return Math.min(4.2, Math.max(1.4, 2.2 + 0.045*(target+20))); }
 
+// ---- Condenser-side physics: head-pressure floating ----
+// Until now this simulation had no condenser model at all — COP depended only
+// on the evaporating/target side. In reality COP depends on the compressor's
+// TOTAL lift: condensing temperature minus evaporating temperature. Condensing
+// temperature = ambient + however much warmer the condenser coil runs than
+// ambient (the "approach"), which is set by condenser fan airflow.
+//
+// A fixed-speed condenser fan (paired with on/off or adaptive two-position
+// compressors in the field) runs at one speed regardless of compressor load,
+// so its approach stays essentially constant. A VFD compressor is standard
+// practice paired with a VARIABLE-SPEED condenser fan, which lets head
+// pressure "float" down when the compressor doesn't need to reject as much
+// heat — this, not compressor speed alone, is the single biggest documented
+// contributor to real VFD retrofit energy savings (commonly cited alongside
+// avoided cycling losses). A minimum floor is kept because real systems can't
+// float head pressure indefinitely — the expansion valve/TXV needs a minimum
+// pressure differential to meter refrigerant correctly.
+const CONDENSER_APPROACH_FULL_C = 12;      // °C above ambient at full fan speed
+const CONDENSER_MIN_APPROACH_FRAC = 0.35;  // floor — minimum head pressure for proper TXV metering
+
+function condenserApproach(mode, capacityFraction){
+  if(mode!=="vfd") return CONDENSER_APPROACH_FULL_C; // fixed-speed fan: no floating available
+  const frac = Math.max(CONDENSER_MIN_APPROACH_FRAC, Math.min(1, capacityFraction));
+  return CONDENSER_APPROACH_FULL_C * frac;
+}
+
+// Rough Carnot-flavored heuristic: COP scales inversely with total lift. The
+// reference lift (42°C) is calibrated to ratedCOP()'s own original design
+// point (~34°C summer ambient + 12°C full approach − 4°C target) so plugging
+// this in doesn't silently retune every existing number — it only matters
+// once conditions (or, for VFD, floated head pressure) depart from that point.
+const COP_REFERENCE_LIFT_C = 42;
+function condenserCOPMult(ambient, target, approach){
+  const lift = (ambient+approach) - target;
+  return Math.min(1.6, Math.max(0.6, COP_REFERENCE_LIFT_C/Math.max(5,lift)));
+}
+
+// Combines both: the number every power/COP calculation should actually use.
+function effectiveCOP(target, mode, capacityFraction, ambient){
+  const approach = condenserApproach(mode, capacityFraction);
+  return ratedCOP(target) * condenserCOPMult(ambient, target, approach);
+}
+
 // A real VFD/digital-scroll compressor is a practical minimum useful speed
 // below which it either can't sustain the refrigeration cycle at all or the
 // manufacturer simply doesn't allow it — it isn't a switch that can run at
@@ -1882,9 +1925,15 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
   st.startupPenaltyRemain[i] = Math.max(0, st.startupPenaltyRemain[i]-dt);
   const STARTUP_COP_PENALTY = 0.82;
   const startupEff = (md.mode!=="vfd" && st.compressorOn[i] && st.startupPenaltyRemain[i]>0) ? STARTUP_COP_PENALTY : 1;
+  // effectiveCOP() folds in condenser head-pressure floating (VFD-only, see
+  // above) on top of the plain evaporating-side ratedCOP() — combined with
+  // vfdEff (motor/inverter part-load loss) and startupEff (on/off cold-start
+  // loss), these are the 3 independent, stacking real mechanisms that make
+  // the three control strategies actually cost different amounts of ₹.
+  const copNow = effectiveCOP(target, md.mode, st.capacityFraction[i], ambient);
   powerArr[i] = st.defrosting[i]
     ? defrostHeaterW/1000
-    : (coolingW>0 ? coolingW/(ratedCOP(target)*(1-Math.min(0.35,st.frost[i]*0.35))*vfdEff*startupEff*1000) : 0.3);
+    : (coolingW>0 ? coolingW/(copNow*(1-Math.min(0.35,st.frost[i]*0.35))*vfdEff*startupEff*1000) : 0.3);
 
   // --- real-world equipment aging: gradual, load-driven, never sudden. A well
   // maintained reciprocating compressor loses on the order of 10-15% of rated
@@ -2840,7 +2889,9 @@ function renderStats(){
     : state.lastHourOnMinutes.reduce((sum,arr)=>sum+arr.reduce((a,b)=>a+b,0),0)/(60*N_ZONES)*100;
   document.getElementById("dutyCycle").textContent = `${duty.toFixed(0)}%`;
   const frostAvg = state.frost.reduce((a,b)=>a+b,0)/N_ZONES;
-  document.getElementById("copVal").textContent = (ratedCOP(cfg.product.target)*(1-Math.min(0.35,frostAvg*0.35))).toFixed(2);
+  const avgCapFrac = state.capacityFraction.reduce((a,b)=>a+b,0)/N_ZONES;
+  const copNowDisplay = effectiveCOP(cfg.product.target, cfg.mode, avgCapFrac, ambientNow().temp);
+  document.getElementById("copVal").textContent = (copNowDisplay*(1-Math.min(0.35,frostAvg*0.35))).toFixed(2);
   document.getElementById("frostVal").textContent = `${(frostAvg*100).toFixed(0)}%`;
   const remain = Math.max(0, Math.min(...state.nextDefrostAt)-state.tMin);
   document.getElementById("nextDefrost").textContent = anyDefrost? "in progress" : `${Math.floor(remain/60)}h ${Math.floor(remain%60)}m`;
@@ -3063,7 +3114,7 @@ const TIPS = {
   "th:tti":       "<b>TTI risk</b>Cumulative time-temperature-integral spoilage index (0–100) for that zone's stored product.",
   "comp:state":   "<b>Compressor state</b>On/off modes: how many of the 3 independent chamber units are currently running. VFD mode: the average commanded capacity across all 3 (0-100%, continuous). Either way, DEFROST overrides while an evaporator is being cleared.",
   "comp:duty":    "<b>Duty cycle</b>On/off modes: share of the last 60 sim-minutes any compressor spent running. VFD mode: current average commanded capacity fraction — there's no 'running or not' to average, only how hard it's working.",
-  "comp:cop":     "<b>COP</b>Simply: cooling out ÷ electricity in. Higher = more efficient. Drops when the coil gets icy, and is naturally lower for colder targets (deep freeze is less efficient than a chiller). See Glossary for the formula.",
+  "comp:cop":     "<b>COP</b>Simply: cooling out ÷ electricity in. Higher = more efficient. Drops when the coil gets icy, when it's hotter outside (harder to reject heat), and is naturally lower for colder targets (deep freeze is less efficient than a chiller). In Variable-speed (VFD) mode it also rises at partial load — the paired variable-speed condenser fan lets head pressure 'float' down when there's less heat to reject, which is the main reason VFD systems save energy in the field. See Glossary for the formula.",
   "comp:frost":   "<b>Frost load</b>Average evaporator ice buildup across zones, 0–100%.",
   "comp:defrost": "<b>Next defrost</b>Countdown to the next scheduled defrost cycle, staggered per zone so they don't all lose cooling at once.",
   "chart:temp":   "Max zone core temperature over the last ~6 sim-hours, against the product's target/band. The faint dashed segment past 'now' is the twin's own forecast.",
@@ -3221,7 +3272,8 @@ const GLOSSARY = [
   { term:"Sensor drift / calibration drift", simple:"A sensor slowly starts reading a little high or low over weeks or months, the way a cheap kitchen thermometer drifts.", example:"'Sensor calibration' events in the Events tab, and the technician's calibration visits.", eq:"bias(t) = bias(t-1) + small random step", diff:"Real drift also depends on humidity, vibration, and the specific sensor model — this uses one generic random-walk rate for all sensors." },
   { term:"Residual", simple:"The gap between what the twin's own guess says and what the sensor says. A big, stubborn gap means something's actually wrong.", example:"'Residual' column in the AI twin layer table, in °C.", eq:"residual = |twin's guess − sensor reading|", diff:"Real systems track the statistical uncertainty of this gap too (how confident to be), not just its size." },
   { term:"State estimator", simple:"The part of the twin that keeps correcting its own guess to match incoming sensor readings, a little at a time.", example:"stepTwinEstimator() — nudges the twin's guessed temperature and guessed compressor strength every tick.", eq:"guess += (reading − guess) × correction strength", diff:"Real industrial versions (Kalman filters) also track how confident each guess is, and weight corrections accordingly." },
-  { term:"COP (Coefficient of Performance)", simple:"How much cooling you get per unit of electricity. Bigger number = more efficient compressor.", example:"'COP (efficiency)' stat, ~2-4 depending on target temperature.", eq:"COP = cooling delivered ÷ electricity used", diff:"Real COP also depends on outdoor temperature, refrigerant type, and load — this uses one simplified formula based only on target temperature and frost." },
+  { term:"COP (Coefficient of Performance)", simple:"How much cooling you get per unit of electricity. Bigger number = more efficient compressor.", example:"'COP (efficiency)' stat, ~2-4 depending on target temperature, outdoor heat, and (in VFD mode) load.", eq:"COP = cooling delivered ÷ electricity used, adjusted for condensing-side 'lift' (ambient + condenser approach − target) — see Glossary's 'Head-pressure floating' entry", diff:"Real COP also depends on refrigerant type and installation quality, and this uses one rough heuristic formula rather than a manufacturer's performance curve." },
+  { term:"Head-pressure floating", simple:"Letting the outdoor condenser fan slow down when the compressor doesn't need to reject as much heat, which lowers the pressure the compressor has to push against — like coasting instead of gunning the engine.", example:"Available only in Variable-speed (VFD) mode — its COP rises at partial load because of this, not just because the compressor itself is slower.", eq:"condensing temp = ambient + approach; approach floats down toward a floor as VFD capacity drops; COP scales roughly inversely with (condensing temp − target)", diff:"A fixed-speed condenser fan (paired with the other two modes here) can't do this at all — this is the single biggest reason real VFD retrofits report 15-30% energy savings, more than the compressor-speed modulation alone." },
   { term:"UA (envelope conductance)", simple:"How fast heat leaks through a chamber's insulated walls. Bigger UA = leakier walls.", example:"Used inside the 'wall/envelope' share of the heat-load breakdown chart.", eq:"heat leaking in (Watts) = UA × (outside temp − inside temp)", diff:"Real UA varies by wall condition, door seals, and age — here it's one fixed number per chamber based on assumed insulation." },
   { term:"Thermal mass / capacitance", simple:"How much heat something can 'soak up' before its temperature actually changes. A tank of water heats up slower than an empty tin can.", example:"Why product core temperature changes slowly (large mass) while air temperature swings fast (small mass).", eq:"temperature change = heat added ÷ thermal mass", diff:"Real thermal mass also depends on packaging and how densely stock is packed — simplified here to just item mass × its cp." },
   { term:"τ (tau, time constant)", simple:"Roughly how long a stored item takes to catch up to the surrounding air temperature — a slow item has a big τ.", example:"Frozen meat τ=55h (very slow); tomato τ=9h (much faster).", eq:"after 1×τ, ~63% of the gap has closed; after 3×τ, ~95% has closed", diff:"Real τ depends on how the item is packed (loose vs. boxed vs. palletized), not just the item itself." },

@@ -130,6 +130,30 @@ field, and was the root cause of the benchmarking anomaly described above: witho
 "when running" power draw was modeled as loss-free, so VFD's own (then-larger) part-load penalty
 made it look worse for no compensating reason.
 
+**Condenser head-pressure floating — the bigger effect, added after further benchmarking:** even
+with the fix above, VFD's total ₹ was only ~1-3% below Two-position (the cold-start penalty only
+covers ~3 of an average ~15-minute cycle, capping its impact). Real VFD retrofits report 15-30%
+savings, and that gap turned out to be a genuine missing mechanism, not a tuning knob: a VFD
+compressor is standard practice paired with a **variable-speed condenser fan**, which lets head
+pressure "float" down when there's less heat to reject — this is the single biggest documented
+contributor to VFD savings, bigger than compressor-speed modulation alone, and this simulation had
+no condenser-side model at all until now. Added (near `ratedCOP()`):
+```
+condensing temp = ambient + approach(mode, capacityFraction)
+  approach = 12°C fixed                                    // Two-position/Adaptive: fixed-speed fan, no floating available
+  approach = 12°C × clamp(capacityFraction, 0.35, 1)        // VFD only: floats down at partial load, floored at 0.35
+                                                             // (real systems keep a minimum head pressure for TXV metering)
+lift = (ambient + approach) − target
+COP multiplier = clamp(42 / lift, 0.6, 1.6)                 // reference lift 42°C = original ratedCOP() design point
+effectiveCOP = ratedCOP(target) × COP multiplier
+```
+`effectiveCOP()` replaces the plain `ratedCOP(target)` call in the power calculation for ALL modes
+(so ambient realism — COP dropping on a hot day — now applies universally, which was itself a
+pre-existing gap), while only VFD gets the additional floating benefit. Re-benchmarked over 10
+sim-days: VFD's kWh dropped ~22% and cost ~15% vs Two-position (₹1728 vs ₹2041) — now in the
+real-world-reported range, for a modeled physical reason rather than a tuned multiplier chosen to
+hit a target number.
+
 **Real-world equivalent:** a PI/PID loop running on a PLC or the compressor's own onboard
 controller, driving a VFD/digital-scroll unit's analog or fieldbus speed reference. To connect: feed
 the real `over` (measured − setpoint) into the same PI math (or better, hand this off to the site's

@@ -136,6 +136,22 @@ not just "physics converges" as initially assumed:
    noise. Retuned to ×1.9/×0.55: peak-period cost now drops ~30% for adaptive vs. Two-position, at
    the cost of more compressor cycling (a genuine, documented tradeoff, not free money).
 
+**Round 2 — still only ~1-3% overall ₹ gap, root-caused further:** after the above fix, the user
+correctly flagged that total ₹ across all 3 modes still looked "basically the same." Traced this
+down mathematically: the average on/off cycle runs ~15.4 minutes, and the cold-start penalty only
+lasts 3 of those — so it can only ever produce a few percent difference (0.195 × 18% loss ≈ 3.5%),
+nowhere near the commonly-cited 15-30% VFD savings figure. That bigger real-world number turned out
+to come from a mechanism the sim had ZERO model of: **condenser head-pressure floating** — a
+variable-speed condenser fan (standard practice paired with VFD compressors) lets head pressure drop
+at partial load, which is the single biggest documented contributor to real VFD savings, bigger than
+compressor-speed modulation alone. Added `condenserApproach()`/`condenserCOPMult()`/`effectiveCOP()`
+(§4c, in the simulation file near `ratedCOP()`): condensing temp = ambient + a fan-speed-dependent
+approach; only VFD mode can float that approach down (a fixed-speed condenser fan, paired with the
+other two modes, can't). Re-benchmarked: VFD kWh dropped ~22% and cost dropped ~15% vs Two-position
+(₹1728 vs ₹2041 over 10 sim-days) — now in the real-world-reported range, for a real physical reason
+rather than a tuned multiplier. This also gave ALL modes a (realistic) ambient-dependent COP for the
+first time — previously COP never varied with outdoor temperature at all, which was itself a gap.
+
 ## 5. NEW: AI-based control approach (4th mode)
 
 - [ ] Define what "AI-based" means concretely for this sim — proposed scope: a learned policy
