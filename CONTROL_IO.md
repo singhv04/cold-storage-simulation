@@ -266,6 +266,18 @@ the rows; `minutesTracked` is identical across rows at any given moment, so raw 
 comparable without normalizing — though ₹/kWh, %-in-band, and cycles/hour are still reported
 because they're the more meaningful units for judging a controller's behavior, not just its scale.
 
+**Why the rows are safe to compare at all (fixed bug):** every stochastic disturbance the three
+parallel runs are exposed to is shared — ambient, tariff clock, dock-door state, truck/turnover
+events, AND (as of this fix) the equipment-wear random walk (`gaussianNoise(0.0006)` inside
+`trueCapMult`, drawn once per zone per tick in `tick()` as `sharedWearNoise` and passed into every
+`stepZone()` call). Before this fix, that noise term was drawn independently per shadow; its
+random-walk std (~2.3%/day, ~7%/10-days) was larger than the real ~1-3% Two-position-vs-Adaptive
+signal, so which mode looked cheaper could flip purely by chance — confirmed with a 200-trial Monte
+Carlo test (44% flip rate with independent noise, 0% after sharing it). If you ever add a NEW
+stochastic element to `stepZone()`/`stepCompressor()`, it needs to be either shared the same way or
+consciously left independent (documented why) — an unshared random term is a live risk of silently
+corrupting this comparison again.
+
 **What this benchmark deliberately does NOT yet do** (future work, not in scope for this file):
 seeded/reproducible runs (TODO.md §2), so re-running the "same" scenario twice will differ in
 exact truck timing and sensor noise draw — fine for a rough comparison, not yet fine for a precise

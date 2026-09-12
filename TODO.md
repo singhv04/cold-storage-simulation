@@ -70,6 +70,17 @@ holds the product at its optimum temperature (not just energy use in isolation).
 - [ ] Add seeded/reproducible randomness (truck arrival timing, sensor noise, wear rate) so a run
       can be replayed exactly — required before any of this can be regression-tested or used to
       reproduce a specific incident.
+- [x] **Found and fixed a real benchmarking-validity bug from this same lack of seeding**: the user
+      reported "Two-position looks cheaper than Adaptive?!" — investigated and confirmed this wasn't
+      a control-logic bug. The equipment-wear random walk (`gaussianNoise(0.0006)` in `trueCapMult`)
+      was being drawn INDEPENDENTLY for the live run and each of the 3 parallel benchmark shadows.
+      Its random-walk std grows ~2.3%/day and ~7%/10-days — bigger than the real ~1-3%
+      Two-position-vs-Adaptive signal — so which mode looked cheaper could flip from pure noise.
+      Verified with a 200-trial Monte Carlo test: with independent noise, Two-position looked cheaper
+      than Adaptive in 44% of trials (a coin flip) despite Adaptive being genuinely cheaper by design;
+      with the fix (drawing the noise ONCE per zone per tick and sharing it across the live run and
+      all shadows, the same way ambient/tariff/door disturbances already are), it never flipped in
+      200 trials. Fixed in `tick()` (`sharedWearNoise`) and `stepZone()`'s new `wearNoise` parameter.
 
 ## 3. Environmental & tariff inputs
 

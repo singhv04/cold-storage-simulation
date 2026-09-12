@@ -1850,7 +1850,7 @@ let lastZonePowerKW = [0.3, 0.3, 0.3];
 // previous state, then coupled to its neighbors. This is a genuine Markovian
 // step: every quantity computed below reads last tick's wallTemp/airTemp/
 // zoneTemp and nothing else, and every next tick depends on exactly this one.
-function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
+function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW, wearNoise=null){
   const target = md.product.target;
   const {temp: ambient, rh: ambRH} = ambientNow();
   const {hour} = ambientNow();
@@ -1978,7 +1978,14 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
   // real consequence.
   const WEAR_PER_CYCLE = 0.10/50000; // ~10% capacity loss per 50,000 start cycles
   const wearFloor = 1 - st.compRuntimeHr[i]*WEAR_PER_HOUR - st.cumulativeCycles[i]*WEAR_PER_CYCLE;
-  st.trueCapMult[i] = Math.max(0.8, wearFloor + gaussianNoise(0.0006)*Math.sqrt(dt));
+  // Uses the caller-supplied shared noise draw when given (see tick()'s
+  // sharedWearNoise) so the live run and every parallel benchmark shadow
+  // experience the SAME random mechanical variance each tick — otherwise this
+  // random walk's own magnitude (std ~2.3%/day, ~7%/10-days) swamps the real
+  // signal between control strategies, corrupting the comparison. Falls back
+  // to drawing its own noise only for standalone/uncoordinated callers.
+  const wearNoiseVal = wearNoise!==null ? wearNoise : gaussianNoise(0.0006);
+  st.trueCapMult[i] = Math.max(0.8, wearFloor + wearNoiseVal*Math.sqrt(dt));
 
   // sensor calibration creep — thermistors drift a fraction of a degree over
   // months, not instantly. Occasionally a technician re-zeroes it (small chance
@@ -2242,8 +2249,19 @@ function tick(dtMin){
     const activeShift = currentShift((state.tMin/60)%24);
     if(activeShift) state.cumulative.workerPersonHours += activeShift.count*dtMin/60;
   }
+  // Shared per-zone equipment-wear noise draw (§ noise-vs-signal fix): this
+  // used to be drawn independently inside stepZone() for the live run AND
+  // each parallel benchmark shadow. Its random-walk std grows ~2.3%/day and
+  // ~7%/10-days — bigger than the real ~1-3% Two-position-vs-Adaptive signal
+  // the comparison table is supposed to show, so which mode looked "cheaper"
+  // could flip purely from this independent noise, not from any real
+  // difference in control strategy. Fixed the same way ambient/tariff/door
+  // are already shared: draw it once per zone per tick, apply identically to
+  // the live run and every shadow, so only the CONTROL LAW differs between
+  // rows, not also an unrelated random walk.
+  const sharedWearNoise = [0,1,2].map(()=>gaussianNoise(0.0006));
   for(let i=0;i<N_ZONES;i++) stepCompressor(i, dtMin);
-  for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin);
+  for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin, state, cfg, lastZonePowerKW, sharedWearNoise[i]);
   for(let i=0;i<N_ZONES;i++) stepTelemetry(i, dtMin);
   for(let i=0;i<N_ZONES;i++) stepTwinEstimator(i, dtMin);
   for(let i=0;i<N_ZONES;i++) stepMaintenance(i, dtMin);
@@ -2265,17 +2283,18 @@ function tick(dtMin){
   accumulateModeMetrics(state, cfg, dtMin, kwh, kwhCost, period);
 
   // ---- parallel benchmark shadows (§6): step the OTHER control modes against
-  // the SAME shared clock/ambient/tariff and the SAME dock-door disturbance
-  // the live run just experienced, so "Controller comparison" reflects modes
-  // running genuinely in parallel rather than re-labeled history. Shadows
-  // don't get their own twin estimator/telemetry noise or event log — see
-  // freshShadowState()'s comment for why that's an intentional scope cut.
+  // the SAME shared clock/ambient/tariff/dock-door disturbance AND the SAME
+  // per-zone wear-noise draw (sharedWearNoise, above) the live run just
+  // experienced, so "Controller comparison" reflects modes running genuinely
+  // in parallel under IDENTICAL conditions — only the control law differs.
+  // Shadows don't get their own twin estimator/telemetry noise or event log —
+  // see freshShadowState()'s comment for why that's an intentional scope cut.
   for(const key of SHADOW_KEYS){
     const sh = shadowStates[key];
     sh.doorOpen = state.doorOpen;
     const shMd = { mode:key, product: cfg.product };
     for(let i=0;i<N_ZONES;i++) stepCompressor(i, dtMin, sh, shMd);
-    for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin, sh, shMd, sh.powerKW);
+    for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin, sh, shMd, sh.powerKW, sharedWearNoise[i]);
     const shKwh = sh.powerKW.reduce((a,b)=>a+b,0)*(dtMin/60);
     const shCost = shKwh*BASE_TARIFF*period.mult;
     accumulateModeMetrics(sh, shMd, dtMin, shKwh, shCost, period);
