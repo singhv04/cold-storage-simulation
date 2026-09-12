@@ -78,7 +78,6 @@ today. To connect to a real one of these: read the real air-temp sensor value in
 **Inputs used:** everything Mode A uses, **plus**:
 - `lastHourOnMinutes[i]` (rolling 60-minute on/off history) → recent duty cycle
 - current tariff period key (`tariffPeriodAt(hour).key`)
-- `zoneRH[i]` and `product.rhTarget` (§4d, new) — humidity deviation from target
 
 **Control law:** same relay logic as Mode A, but `band` is retuned every tick before use:
 ```
@@ -87,19 +86,34 @@ band *= (recentDuty > 0.55) ? 0.7 : 1.25        // load-based: tighten under hea
 band *= (period == "peak") ? 1.9                 // tariff-based: loosen during Peak (coast on thermal mass)
         : (period in {"offpeak","solar"}) ? 0.55 // tighten during cheap hours (bank cooling ahead of Peak)
         : 1.0
-band = clamp(band, base_band*0.5, base_band*1.5)  // §4d hard safety clamp — see below
-if |zoneRH[i] - rhTarget| > 15: band = min(band, base_band*0.8)  // §4d RH override
+band = clamp(band, base_band*0.5, base_band*1.5)  // §4d hard safety clamp
 ```
 (An initial ×1.4/×0.8 spread benchmarked to under 2% net saving over Mode A — too weak to
 distinguish from noise against the load-based retune. Retuned to ×1.9/×0.55, which cuts peak-period
 cost ~30% at the cost of more compressor cycling — see TODO.md §4b's "found via benchmarking" note.)
 
-**Hard safety clamp (§4d, new):** nothing previously stopped the duty-cycle × tariff multipliers
+**Hard safety clamp (§4d):** nothing previously stopped the duty-cycle × tariff multipliers
 from stacking arbitrarily wide (up to ~2.4× base band). A real BMS always hard-limits adaptive tuning
 to a safe envelope no matter what the cost signal computes — added `[0.5×, 1.5×]` clamp on the final
-band, plus an override that forces the tight end if humidity has drifted >15 points from
-`rhTarget`, since a real adaptive controller wouldn't loosen the temperature band to chase a cheap
-tariff while humidity is already out of spec for the product.
+band.
+
+**Removed: an RH-deviation override that was silently cancelling almost the whole mechanism above
+(bug found via audit).** §4d originally also forced the band toward its tight end whenever `zoneRH`
+drifted >15 points from `rhTarget`, reasoning that a real adaptive controller shouldn't loosen
+temperature control to chase a cheap tariff while humidity is already out of spec. Sound reasoning,
+wrong for THIS model: RH here is a passive byproduct of ambient inflow and compressor-driven
+dehumidification (see `stepZone()`'s humidity section) — never actively steered toward `rhTarget`,
+and for high-target products like potato (`rhTarget` 90%) actual RH settles around 45-47% under
+normal operation. That means the override's condition was true essentially 100% of the time,
+permanently capping the band at 0.8× base and silently erasing nearly all of the duty/tariff
+retuning above it — which is exactly why Two-position and Adaptive looked "almost identical" in
+practice despite the tariff-shift logic being real and (on its own) working. Confirmed via a 15-day
+headless replay of the real production code: removing the override restored genuine differentiation
+system-wide — e.g. tomato's Peak-period kWh dropped ~35% for Adaptive vs Two-position, and several
+products (tomato, banana, mango, dairy, produce) flipped from "same or worse" to genuinely cheaper
+overall for Adaptive. A real humidity-aware adaptive controller would need RH to actually be actively
+regulated first — gating band width on a number the controller can't influence isn't safety, it's
+noise that happens to always evaluate true.
 
 **Output:** same shape as Mode A.
 

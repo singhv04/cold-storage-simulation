@@ -264,21 +264,39 @@ tests, because they only show up over many simulated days of real dynamics):
    real-world practice genuinely often lacks end-to-end cold-chain for those (a well-documented actual
    gap in Indian agri-logistics, not a simulation shortcut).
 
+4. **Follow-up bug, found from a user question ("why do Two-position and Adaptive look almost
+   identical — shouldn't they differ in energy use?"):** the §4d "RH-deviation override" (forces
+   Adaptive's band tight whenever `zoneRH` strays >15 points from `rhTarget`) was firing **100% of
+   the time** for potato — because RH in this model is a passive byproduct of ambient inflow and
+   compressor dehumidification, never actively steered toward `rhTarget`, and actual RH (45-47%
+   for potato) never comes anywhere near a 90% target. The override was permanently capping the
+   band at 0.8× base, silently cancelling nearly the entire duty/tariff retuning mechanism —
+   which is exactly why Two-position and Adaptive looked "almost the same": the tariff-shift logic
+   was real and working, but a later, well-intentioned safety addition had quietly neutered it.
+   **Removed** — gating band width on a number the controller can't actually influence isn't
+   safety, it just happened to always evaluate true. See `CONTROL_IO.md` Mode B for the full
+   reasoning and TODO.md if a genuinely RH-actively-controlled version is ever built later.
+
 **Result across all 9 products, 15-day headless replay of the fixed code** (`inBand%` = % of tracked
-time ALL 3 zones held within target±band; VFD consistently ranks best on both cost and quality after
-these fixes, matching real-world expectations for the first time):
+time ALL 3 zones held within target±band; VFD consistently ranks best on both cost and quality, and
+Two-position vs. Adaptive now show real, meaningful differentiation — every product shows Adaptive
+cutting Peak-period kWh substantially, e.g. tomato −35%, produce −19%, dairy −11%):
 
 | Product | Two-position | Adaptive | VFD |
 |---|---|---|---|
-| potato | 60.1% | 61.8% | **63.8%** |
-| onion | 72.9% | 74.0% | **76.1%** |
-| tomato | 32.6% | 37.5% | **43.3%** |
-| banana | 15.9% | 21.5% | **26.1%** |
-| mango | 40.1% | 44.8% | **49.3%** |
-| meat | 26.4% | 31.6% | **45.2%** |
-| pharma | 28.3% | 35.0% | **36.4%** |
-| dairy | 1.5% | 1.6% | **9.5%** |
-| produce | 0.0% | 0.0% | 1.6% |
+| potato | 58.6% | 59.5% | **63.0%** |
+| onion | 70.6% | 71.4% | **73.7%** |
+| tomato | 31.9% | 29.9% | **42.3%** |
+| banana | 20.4% | 20.9% | **30.7%** |
+| mango | 35.2% | 36.3% | **44.0%** |
+| meat | 28.9% | 30.3% | **46.9%** |
+| pharma | 30.1% | 34.9% | **36.3%** |
+| dairy | 0.0% | 0.0% | **7.6%** |
+| produce | 0.0% | 0.0% | 1.4% |
+
+(Several products — tomato, banana, mango, dairy, produce — now also show Adaptive's *total* ₹
+genuinely lower than Two-position's, not just its Peak-hour slice, once the override was no longer
+suppressing the mechanism.)
 
 **Open question, NOT unilaterally fixed** (flagged for a decision, not a code defect): "Leafy
 produce" and, to a lesser extent, "Dairy crates" still show low in-band% because their delivery

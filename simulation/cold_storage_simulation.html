@@ -2247,15 +2247,29 @@ function stepCompressor(i, dt, st=state, md=cfg){
       // Hard safety clamp (§ gaps review): a real BMS never lets an adaptive
       // tuning routine drift the deadband outside a fixed safe envelope no
       // matter what the cost signal says — nothing here previously stopped the
-      // tariff/duty multipliers from stacking arbitrarily wide. Also override
-      // toward the tight end if humidity has drifted far from target — RH
-      // control matters as much as temperature for produce quality, and a
-      // real adaptive controller wouldn't loosen the temperature band to chase
-      // a cheap tariff while humidity is already out of spec.
+      // tariff/duty multipliers from stacking arbitrarily wide.
       const ADAPTIVE_BAND_MAX_MULT = 1.5, ADAPTIVE_BAND_MIN_MULT = 0.5;
       band = Math.min(md.product.band*ADAPTIVE_BAND_MAX_MULT, Math.max(md.product.band*ADAPTIVE_BAND_MIN_MULT, band));
-      const rhDeviation = Math.abs(st.zoneRH[i]*100 - md.product.rhTarget);
-      if(rhDeviation > 15) band = Math.min(band, md.product.band*0.8);
+      // REMOVED (bug found via audit): there used to be an override here that
+      // capped the band tighter whenever zoneRH strayed >15 points from
+      // rhTarget, meant to stop the controller loosening temperature to chase
+      // a cheap tariff while humidity was already out of spec. It was
+      // conceptually reasonable but factually wrong for THIS model: RH here is
+      // a passive byproduct of ambient inflow and compressor-driven
+      // dehumidification (see stepZone's humidity section) — it is not
+      // steered by, or even meaningfully coupled to, the TEMPERATURE band
+      // width at all, and for high-RH-target products like potato (rhTarget
+      // 90%) actual RH settles around 45-47% under normal operation — meaning
+      // the override's condition was true essentially 100% of the time,
+      // permanently capping the band at 0.8x and silently cancelling almost
+      // the entire duty/tariff retuning mechanism above. Confirmed via a
+      // 15-day headless replay: removing it restored real tariff-hour
+      // differentiation (e.g. tomato's Peak-period kWh dropped ~35% for
+      // Adaptive vs Two-position, vs. near-zero difference with the override
+      // in place). A genuine humidity-aware adaptive control would need RH to
+      // actually be actively regulated first (a bigger feature, not built
+      // yet) — gating on a number the controller can't influence isn't safety,
+      // it's just noise that happened to always evaluate true.
     }
     // Motor-protection timers: a real contactor/compressor can't be flipped the
     // instant the band says so — once engaged it must run MIN_RUN_MIN, once
