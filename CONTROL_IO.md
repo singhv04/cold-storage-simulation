@@ -20,6 +20,7 @@ at time of writing — search for `function stepCompressor`).
 | `cfg.product.band` | Selected product profile | The configured hysteresis/deadband width |
 | `dt` (tick size, minutes) | Simulation loop | Real controller scan/loop interval (typically sub-second to a few seconds for a PLC) |
 | `state.tMin` → hour-of-day → `tariffPeriodAt(hour)` | Hardcoded 4-band ToU schedule (`TARIFF_BANDS`) | The real DISCOM's actual industrial/commercial ToU tariff schedule (state-specific — see §3 in TODO.md) |
+| `ambientNow().temp` | Physics engine's diurnal/seasonal curve | Outdoor air temperature at the condenser — now used by ALL modes (§4d) via `condenserApproach()`/`effectiveCOP()` for both COP and the high-head-pressure safety cutout, not just VFD |
 
 **Note on what real controllers do NOT get:** none of the three current modes read
 `zoneTemp[i]` (product core temperature) directly — only air temperature. This is
@@ -35,6 +36,13 @@ that's the point of comparing it against these three fairly.
 |---|---|---|
 | `state.compressorOn[i]` (bool) | Whether `stepZone` applies `coolingW` this tick | Contactor/relay coil energized → compressor motor runs |
 | `state.capacityFraction[i]` (0–1) | Scales `coolingW` and, in VFD mode, the part-load efficiency penalty | 0/1 for a fixed-speed compressor; 0.0–1.0 commanded speed for a VFD/digital-scroll drive (via 0–10V, 4–20mA, or a fieldbus speed reference) |
+
+**Shared safety layer (§4d, new):** before any mode-specific control law runs, `stepCompressor()` now
+checks a high-head-pressure cutout common to all three modes — if condensing temperature (ambient +
+condenser approach) exceeds 55°C, the compressor is forced off for a 5-minute cooldown regardless of
+what the controller wants, exactly like a real high-pressure switch overriding the thermostat/BMS. A
+fixed-speed condenser fan (Modes A/B) is structurally closer to this limit than VFD's floating head
+pressure — a realistic emergent difference, not a mode-specific rule. State: `hpTripRemain[i]`.
 
 ---
 
@@ -70,6 +78,7 @@ today. To connect to a real one of these: read the real air-temp sensor value in
 **Inputs used:** everything Mode A uses, **plus**:
 - `lastHourOnMinutes[i]` (rolling 60-minute on/off history) → recent duty cycle
 - current tariff period key (`tariffPeriodAt(hour).key`)
+- `zoneRH[i]` and `product.rhTarget` (§4d, new) — humidity deviation from target
 
 **Control law:** same relay logic as Mode A, but `band` is retuned every tick before use:
 ```
@@ -78,10 +87,19 @@ band *= (recentDuty > 0.55) ? 0.7 : 1.25        // load-based: tighten under hea
 band *= (period == "peak") ? 1.9                 // tariff-based: loosen during Peak (coast on thermal mass)
         : (period in {"offpeak","solar"}) ? 0.55 // tighten during cheap hours (bank cooling ahead of Peak)
         : 1.0
+band = clamp(band, base_band*0.5, base_band*1.5)  // §4d hard safety clamp — see below
+if |zoneRH[i] - rhTarget| > 15: band = min(band, base_band*0.8)  // §4d RH override
 ```
 (An initial ×1.4/×0.8 spread benchmarked to under 2% net saving over Mode A — too weak to
 distinguish from noise against the load-based retune. Retuned to ×1.9/×0.55, which cuts peak-period
 cost ~30% at the cost of more compressor cycling — see TODO.md §4b's "found via benchmarking" note.)
+
+**Hard safety clamp (§4d, new):** nothing previously stopped the duty-cycle × tariff multipliers
+from stacking arbitrarily wide (up to ~2.4× base band). A real BMS always hard-limits adaptive tuning
+to a safe envelope no matter what the cost signal computes — added `[0.5×, 1.5×]` clamp on the final
+band, plus an override that forces the tight end if humidity has drifted >15 points from
+`rhTarget`, since a real adaptive controller wouldn't loosen the temperature band to chase a cheap
+tariff while humidity is already out of spec for the product.
 
 **Output:** same shape as Mode A.
 
@@ -93,8 +111,10 @@ whatever field bus/database the real site's actual duty-cycle log and tariff cal
 ## Mode C — Variable-speed (VFD/PI), `cfg.mode === "vfd"`
 
 **Inputs used:** `airTemp[i]`, `target`, `band`, plus the controller's own running integral term
-`piIntegral[i]` (pure internal state, carried tick to tick — no external input beyond the error),
-plus each chamber's own fixed physical size/capacity (`ZONE_SPECS[i]`) used once to derive its gains.
+`piIntegral[i]` (pure internal state, carried tick to tick), plus each chamber's own fixed physical
+size/capacity (`ZONE_SPECS[i]`) used once to derive its gains, plus (§4d, new) the shift roster
+start times and, for Zone A, the booked next truck appointment — both schedule data the sim already
+maintains, used only for feedforward, not as privileged foresight a real site wouldn't have.
 
 **Control law:**
 ```
@@ -103,19 +123,42 @@ over = airTemp[i] - target
     Kp = 1/band                                              // same as before, error-driven
     minutesPerDegreeAtFullTilt = airCapacityKJperK(i)*1000 / compCapacityW[i] / 60
     Ki = 0.004 * (REFERENCE_MIN_PER_DEG=1.5 / minutesPerDegreeAtFullTilt)  // per-chamber commissioning, §4c
-piIntegral[i] = clamp(piIntegral[i] + over*Ki*dt, -2, 2)
-demand = clamp(over*Kp + piIntegral[i], 0, 1)
+
+feedforward = 0                                              // §4d, new
+  + 0.10 if a shift starts within 15 min
+  + 0.15 if (zone A only) a booked truck delivery is within 20 min
+
+demandRaw = over*Kp + piIntegral[i] + feedforward
+demand = clamp(demandRaw, 0, 1)
+satError = demand - demandRaw                                // §4d anti-windup by back-calculation
+piIntegral[i] += (over*Ki + satError*KB_ANTIWINDUP=0.5) * dt  // replaces the old blunt ±2 clamp
+
 if 0 < demand < VFD_MIN_SPEED(0.25):             // §4c minimum-speed floor
     demand = (compressor was OFF) ? 0 : (demand < 0.125 ? 0 : VFD_MIN_SPEED)
 capacityFraction[i] = slew-limited step toward demand, max 0.06/min
 compressorOn[i] = capacityFraction[i] > 0.03
 ```
 
+**Anti-windup, properly (§4d):** the previous version just clamped `piIntegral` to a hand-picked
+±2 — a blunt approximation that lets the integral term keep drifting even while the output is
+already saturated at 0 or 1. Replaced with standard back-calculation: the integral only keeps
+accumulating error once the output stops being saturated, which is what a real PI/PID
+implementation actually does.
+
+**Feedforward (§4d):** a real commissioned system doesn't wait for temperature to actually drift
+before reacting — it anticipates known disturbances. The sim already knows the shift roster and
+Zone A's booked dock appointments in advance (both drive real heat loads: worker body heat, warm
+incoming pallets), so a small demand nudge lands shortly *before* the load hits, not only after the
+PI term reacts to the resulting error.
+
 **Output:** `capacityFraction[i]` ∈ [0,1] continuous; `compressorOn[i]` derived from it.
 Delivered power also folds in `vfdEfficiencyMult(capacityFraction)` — a non-linear part-load
-efficiency curve (0.85× rated COP at the speed floor, 1.0× at full speed) — this is an energy-model
-detail, not a controller input/output, but it means the same `capacityFraction` output costs
-slightly more ₹/kWh-of-cooling at low speed than at high speed, which is realistic VFD behavior.
+efficiency curve (0.85× rated COP at the speed floor, 1.0× at full speed) — plus (§4d, new)
+`VFD_DRIVE_LOSS=0.97`, a small flat inverter/harmonics loss that exists regardless of speed, so
+"VFD" isn't implicitly free efficiency at the drive level. The paired variable-speed condenser fan
+(§4c/§4d) also now draws its own metered power (`FAN_POWER_FRACTION=0.04` of rated compressor
+capacity, scaling down with capacity fraction) — a real, partial offset to VFD's compressor-side
+savings that wasn't charged anywhere before.
 (Originally 0.72× at the floor; softened after benchmarking showed this alone made VFD look MORE
 expensive than Two-position, backwards from the ~15-35% savings VFD retrofits report in the field —
 see the corresponding fix on Mode A below and TODO.md §4c.)
@@ -227,3 +270,17 @@ because they're the more meaningful units for judging a controller's behavior, n
 seeded/reproducible runs (TODO.md §2), so re-running the "same" scenario twice will differ in
 exact truck timing and sensor noise draw — fine for a rough comparison, not yet fine for a precise
 regression test between mode versions. A 4th shadow for Mode D will slot in the same way once built.
+
+---
+
+## §4d gap-analysis pass — deliberately deferred items
+
+Not every real-world gap found in this pass was implemented — some carry real architectural risk or
+low value for the effort. Tracked in `TODO.md` §4d rather than silently dropped:
+- Multiple staged compressors per zone (lead-lag) — would require restructuring the per-zone
+  `compressorOn[i]`/`capacityFraction[i]` scalars into per-unit arrays throughout the control,
+  physics, twin, and UI layers — a genuine rework, not a localized fix.
+- Locked-rotor inrush as a real current-vs-time profile (rather than a flat one-time kWh charge).
+- Adaptive-band memory across days (day-of-week/hour learned patterns).
+- Contactor/relay electrical wear as its own failure mode, distinct from the compressor capacity
+  wear §4d already added from cycle count.

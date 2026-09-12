@@ -1333,6 +1333,11 @@ function freshState(){
     // cold-start efficiency penalty after each two-position/adaptive engage —
     // see STARTUP_COP_PENALTY in stepZone() for why this exists.
     startupPenaltyRemain: [0,0,0],
+    // high-head-pressure safety-cutout cooldown timer, see stepCompressor()
+    hpTripRemain: [0,0,0],
+    // lifetime cycle count per zone, independent of mode-switching — drives
+    // the cycle-wear component in stepZone()'s equipment-aging model
+    cumulativeCycles: [0,0,0],
     doorOpen: false,
     doorTimer: 0,
     doorOpenTotalToday: 0,
@@ -1467,6 +1472,7 @@ function freshShadowState(){
     compressorOn: [false,false,false], capacityFraction: [0,0,0], piIntegral: [0,0,0],
     lastHourOnMinutes: [new Array(60).fill(0), new Array(60).fill(0), new Array(60).fill(0)],
     minRunRemain: [0,0,0], minRestRemain: [0,0,0], startupPenaltyRemain: [0,0,0],
+    hpTripRemain: [0,0,0], cumulativeCycles: [0,0,0],
     defrosting: [false,false,false], defrostTimer: [0,0,0], nextDefrostAt: [240,300,210],
     spoilIndex: [0,0,0], batchAgeMin: [0,0,0],
     compRuntimeHr: [0,0,0], trueCapMult: [1,1,1], sensorDriftBias: [0,0,0], zoneSensor: [8,8,-5],
@@ -1915,7 +1921,13 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
   // 40% of rated power, not a relay-click's worth either way. In VFD mode this
   // also folds in the non-linear part-load efficiency curve (§4c) — running at
   // low speed costs proportionally more per unit of cooling than full speed.
-  const vfdEff = md.mode==="vfd" ? vfdEfficiencyMult(st.capacityFraction[i]) : 1;
+  // VFD_DRIVE_LOSS — the drive itself (rectifier/inverter switching, harmonics)
+  // has a small fixed efficiency cost that exists regardless of speed, on top
+  // of the compressor's own part-load curve. Previously unmodeled; real VFDs
+  // typically run ~2-4% less efficient than a bare fixed-speed motor for this
+  // reason alone, which is why "VFD" isn't automatically free efficiency.
+  const VFD_DRIVE_LOSS = 0.97;
+  const vfdEff = md.mode==="vfd" ? vfdEfficiencyMult(st.capacityFraction[i])*VFD_DRIVE_LOSS : 1;
   // STARTUP_COP_PENALTY — a two-position/adaptive compressor doesn't deliver
   // full-efficiency cooling the instant it engages: refrigerant that migrated
   // during the last OFF period and unequalized system pressure both take a
@@ -1931,9 +1943,21 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
   // loss), these are the 3 independent, stacking real mechanisms that make
   // the three control strategies actually cost different amounts of ₹.
   const copNow = effectiveCOP(target, md.mode, st.capacityFraction[i], ambient);
-  powerArr[i] = st.defrosting[i]
+  const compressorPowerKW = st.defrosting[i]
     ? defrostHeaterW/1000
     : (coolingW>0 ? coolingW/(copNow*(1-Math.min(0.35,st.frost[i]*0.35))*vfdEff*startupEff*1000) : 0.3);
+  // Condenser fan power (§ gaps review): the head-pressure-floating benefit
+  // above came from a real actuator — the condenser fan — that was never
+  // actually charged its own electricity before. A fixed-speed fan (paired
+  // with Two-position/Adaptive) draws its full rated power whenever the
+  // compressor calls for cooling; a VFD-paired variable-speed fan slows down
+  // right along with the floated approach, so it draws proportionally less —
+  // a real cost that partially offsets (but doesn't erase) VFD's compressor-
+  // side savings.
+  const FAN_POWER_FRACTION = 0.04; // ~4% of rated compressor capacity, typical packaged-unit condenser fan motor
+  const fanSpeedFrac = md.mode==="vfd" ? Math.max(CONDENSER_MIN_APPROACH_FRAC, Math.min(1, st.capacityFraction[i])) : 1;
+  const fanPowerKW = (st.compressorOn[i] && !st.defrosting[i]) ? (ZONE_SPECS[i].compCapacityW/1000)*FAN_POWER_FRACTION*fanSpeedFrac : 0;
+  powerArr[i] = compressorPowerKW + fanPowerKW;
 
   // --- real-world equipment aging: gradual, load-driven, never sudden. A well
   // maintained reciprocating compressor loses on the order of 10-15% of rated
@@ -1944,7 +1968,16 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
     st.compRuntimeHr[i] += dt/60;
   }
   const WEAR_PER_HOUR = 0.10/16000; // ~10% capacity loss per 16,000 running hours
-  const wearFloor = 1 - st.compRuntimeHr[i]*WEAR_PER_HOUR;
+  // Cycle-driven wear (§ gaps review): runtime-hours isn't the only thing that
+  // wears a compressor — every start is its own mechanical/electrical stress
+  // (contactor contact erosion, motor winding thermal cycling, valve/seal
+  // shock) independent of how long it then runs. Previously cycle count was
+  // only tracked as a cost/benchmark metric, never actually degraded anything
+  // — meaning a mode that cycled 400x had no more wear than one that cycled
+  // once, contradicting the sim's own "compressor cycles" metric having any
+  // real consequence.
+  const WEAR_PER_CYCLE = 0.10/50000; // ~10% capacity loss per 50,000 start cycles
+  const wearFloor = 1 - st.compRuntimeHr[i]*WEAR_PER_HOUR - st.cumulativeCycles[i]*WEAR_PER_CYCLE;
   st.trueCapMult[i] = Math.max(0.8, wearFloor + gaussianNoise(0.0006)*Math.sqrt(dt));
 
   // sensor calibration creep — thermistors drift a fraction of a degree over
@@ -2028,13 +2061,74 @@ function stepCompressor(i, dt, st=state, md=cfg){
   const target = md.product.target;
   const over = st.airTemp[i] - target;
 
+  // ---- High-head-pressure safety cutout ----
+  // Every real refrigeration circuit has a high-pressure switch that trips the
+  // compressor if condensing pressure gets dangerously high (extreme ambient +
+  // full load), protecting it from a blown gasket/seal. This didn't exist at
+  // all before — the sim had no fault path, only ever-cooling equipment.
+  //
+  // IMPORTANT: this trips on CONDENSING temperature alone (ambient + approach),
+  // NOT on "lift" (condensing − target/evaporating temp). An earlier version of
+  // this code used lift, which meant deep-freeze (target −18°C) tripped almost
+  // continuously — target being very cold doesn't raise discharge pressure, a
+  // real high-pressure switch senses discharge-side pressure only, and low-temp
+  // systems are specifically designed (different compressor staging) to handle
+  // their inherently larger compression ratio without tripping on that basis.
+  // Condensing temp is what actually drives discharge pressure regardless of
+  // how cold the evaporator side is. A fixed-speed condenser fan
+  // (Two-position/Adaptive) can't float its approach down the way VFD can, so
+  // it's the one that actually reaches this threshold in practice — a
+  // realistic emergent difference, not a hand-picked mode-specific rule.
+  {
+    const approachNow = condenserApproach(md.mode, st.capacityFraction[i]);
+    const { temp: ambientNow_ } = ambientNow();
+    const condensingTempNow = ambientNow_ + approachNow;
+    const HP_TRIP_CONDENSING_C = 55; // ~typical high-pressure cutout setpoint for common refrigerants
+    const HP_TRIP_COOLDOWN_MIN = 5;
+    st.hpTripRemain[i] = Math.max(0, st.hpTripRemain[i] - dt);
+    if(st.hpTripRemain[i] > 0){
+      st.compressorOn[i] = false; st.capacityFraction[i] = 0;
+      st.lastHourOnMinutes[i].shift(); st.lastHourOnMinutes[i].push(0);
+      return;
+    }
+    if(condensingTempNow > HP_TRIP_CONDENSING_C && st.compressorOn[i]){
+      st.compressorOn[i] = false; st.capacityFraction[i] = 0; st.hpTripRemain[i] = HP_TRIP_COOLDOWN_MIN;
+      if(isLive){
+        logEvent(`⚠ ${ZONES[i]} HIGH-HEAD-PRESSURE TRIP — compressor cut out, ${HP_TRIP_COOLDOWN_MIN}min cooldown`, true);
+        pushEvent({ category:"alert", name:"High-head-pressure trip", zone:i, alert:true, spec:`condensing temp ${condensingTempNow.toFixed(0)}°C > ${HP_TRIP_CONDENSING_C}°C safety limit` });
+      }
+      st.lastHourOnMinutes[i].shift(); st.lastHourOnMinutes[i].push(0);
+      return;
+    }
+  }
+
   if(md.mode === "vfd"){
     // Continuous PI capacity modulation — the real behavior of a VFD/digital-
     // scroll compressor: no relay clicks, capacity tracks error smoothly.
     const { Kp, Ki } = vfdGains(i, md);  // per-chamber commissioned gains, see vfdGains()
-    st.piIntegral[i] = Math.min(2, Math.max(-2, st.piIntegral[i] + over*Ki*dt));
-    let demand = over*Kp + st.piIntegral[i];
-    demand = Math.min(1, Math.max(0, demand));
+    // Feedforward (§ gaps review): a commissioned real system doesn't purely
+    // react after temperature has already drifted — it anticipates known
+    // upcoming heat loads. We know the shift roster and Zone A's booked dock
+    // appointments in advance, so nudge demand up shortly BEFORE the load
+    // actually lands, not just after the PI term reacts to the resulting error.
+    let feedforward = 0;
+    for(const s of SHIFTS){
+      const deltaMin = ((s.start - ((state.tMin/60)%24) + 24) % 24) * 60;
+      if(deltaMin <= 15) feedforward += 0.10;
+    }
+    if(i===0 && state.nextTruckAppt!==null){
+      const deltaMin = state.nextTruckAppt - state.tMin;
+      if(deltaMin>=0 && deltaMin<=20) feedforward += 0.15;
+    }
+    // Anti-windup by back-calculation (§ gaps review): the previous version
+    // just clamped the integral term to a hand-picked ±2 — a blunt approximation.
+    // A real PI implementation stops the integral accumulating further once the
+    // output has saturated, by feeding back how much clamping actually happened.
+    const demandRaw = over*Kp + st.piIntegral[i] + feedforward;
+    let demand = Math.min(1, Math.max(0, demandRaw));
+    const KB_ANTIWINDUP = 0.5; // back-calculation gain
+    const satError = demand - demandRaw; // 0 unless saturated
+    st.piIntegral[i] += (over*Ki + satError*KB_ANTIWINDUP)*dt;
     // §4c — real VFD compressors have a practical minimum useful speed: they
     // can't idle at an arbitrary tiny fraction. Below the floor, either stay
     // off (if already off — tolerate the small resulting error) or hold at
@@ -2049,7 +2143,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
     st.capacityFraction[i] = Math.min(1, Math.max(0, st.capacityFraction[i]+delta));
     const wasOn = st.compressorOn[i];
     st.compressorOn[i] = st.capacityFraction[i] > 0.03;
-    if(!wasOn && st.compressorOn[i]) st.modeMetrics[md.mode].cyclesStarted++;
+    if(!wasOn && st.compressorOn[i]){ st.modeMetrics[md.mode].cyclesStarted++; st.cumulativeCycles[i]++; }
   } else {
     // Two-position (fixed band) or adaptive-band (retuned deadband) relay control.
     let band = md.product.band;
@@ -2071,6 +2165,18 @@ function stepCompressor(i, dt, st=state, md=cfg){
       const periodKey = tariffPeriodAt((state.tMin/60)%24).key;
       if(periodKey==="peak") band *= 1.9;
       else if(periodKey==="offpeak" || periodKey==="solar") band *= 0.55;
+      // Hard safety clamp (§ gaps review): a real BMS never lets an adaptive
+      // tuning routine drift the deadband outside a fixed safe envelope no
+      // matter what the cost signal says — nothing here previously stopped the
+      // tariff/duty multipliers from stacking arbitrarily wide. Also override
+      // toward the tight end if humidity has drifted far from target — RH
+      // control matters as much as temperature for produce quality, and a
+      // real adaptive controller wouldn't loosen the temperature band to chase
+      // a cheap tariff while humidity is already out of spec.
+      const ADAPTIVE_BAND_MAX_MULT = 1.5, ADAPTIVE_BAND_MIN_MULT = 0.5;
+      band = Math.min(md.product.band*ADAPTIVE_BAND_MAX_MULT, Math.max(md.product.band*ADAPTIVE_BAND_MIN_MULT, band));
+      const rhDeviation = Math.abs(st.zoneRH[i]*100 - md.product.rhTarget);
+      if(rhDeviation > 15) band = Math.min(band, md.product.band*0.8);
     }
     // Motor-protection timers: a real contactor/compressor can't be flipped the
     // instant the band says so — once engaged it must run MIN_RUN_MIN, once
@@ -2082,6 +2188,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
     if(!st.compressorOn[i] && over > band && st.minRestRemain[i]<=0){
       st.compressorOn[i] = true;
       st.minRunRemain[i] = MIN_RUN_MIN;
+      st.cumulativeCycles[i]++;
       // Cold-start penalty (see STARTUP_COP_PENALTY in stepZone): after any
       // stop, refrigerant migrates/settles and system pressure equalizes —
       // the next run-up doesn't deliver full-efficiency cooling right away.
@@ -3300,7 +3407,8 @@ const GLOSSARY = [
   { term:"Forecast (twin projection)", simple:"The twin's best guess of what temperature is coming next, based on its own current understanding of the building.", example:"The dashed line past 'now' on the Zone temperature chart.", eq:"—", diff:"Real forecasts also factor in tomorrow's actual weather forecast — this assumes today's ambient conditions hold steady." },
   { term:"Advisory layer", simple:"A simple rule-checker that turns the twin's numbers into plain-English suggestions.", example:"The 'AI twin layer' recommendation cards, e.g. 'schedule an early defrost.'", eq:"—", diff:"A real AI system would replace these fixed rules with a model trained on real outcomes." },
   { term:"Anomaly detection", simple:"Noticing a genuine, ongoing problem — as opposed to just one noisy reading — and figuring out roughly what kind of problem it is.", example:"'Service due' / 'Sensor drift' status pills in the AI twin layer table.", eq:"—", diff:"Real anomaly detection also uses historical patterns and can spot problems this sim's simple thresholds would miss." },
-  { term:"Wear / degradation curve", simple:"Equipment doesn't fail suddenly — it slowly loses a little performance the more hours it runs, like a car's brake pads wearing down.", example:"Compressor capacity falling ~10% over ~16,000 running hours.", eq:"true capacity = 1 − (hours run × wear rate)", diff:"Real wear also accelerates with poor maintenance, extreme loads, or manufacturing defects — this uses one steady rate for everything." },
+  { term:"Wear / degradation curve", simple:"Equipment doesn't fail suddenly — it slowly loses a little performance the more hours it runs AND the more times it's started, like a car's brake pads wearing down from both mileage and how often you brake.", example:"Compressor capacity falling ~10% over ~16,000 running hours, plus a further ~10% over ~50,000 start cycles — this is why a heavily-cycling controller mode shows up as extra long-run wear, not just extra energy.", eq:"true capacity = 1 − (hours run × hourly wear rate) − (cycles started × per-cycle wear rate)", diff:"Real wear also accelerates with poor maintenance, extreme loads, or manufacturing defects — this uses one steady rate for each of the two mechanisms." },
+  { term:"High-head-pressure trip", simple:"A safety switch that shuts the compressor off if the pressure it's pumping against gets dangerously high (usually a very hot day), protecting it from damage — like an engine's over-rev cutoff.", example:"Rare in the mild seasons/targets this sim ships with, but the mechanism is live for every mode — it's just that a fixed-speed condenser fan (Two-position/Adaptive) is closer to the limit than VFD's floating head pressure.", eq:"trips if (ambient + condenser approach) exceeds a fixed condensing-temperature limit, independent of how cold the target is — cools down for a few minutes, then resumes", diff:"Real cutouts sense actual refrigerant pressure, not a temperature proxy, and often need a manual reset above a certain severity rather than always auto-resuming." },
   { term:"Diurnal curve (day/night ambient)", simple:"How outdoor temperature naturally rises through the day and falls at night.", example:"Ambient stat and the day/night ring on the Sim Clock — warm-colored by day, cool by night.", eq:"temp ≈ season's average + swing × (time-of-day wave)", diff:"Real daily temperature isn't a smooth wave — clouds, rain, and wind cause real bumps this simplified curve skips." },
 ];
 

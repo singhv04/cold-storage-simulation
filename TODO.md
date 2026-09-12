@@ -152,6 +152,71 @@ other two modes, can't). Re-benchmarked: VFD kWh dropped ~22% and cost dropped ~
 rather than a tuned multiplier. This also gave ALL modes a (realistic) ambient-dependent COP for the
 first time — previously COP never varied with outdoor temperature at all, which was itself a gap.
 
+### 4d. Gap-analysis pass — what's still different from a real installation, per mode
+
+Prompted by "anything missing in each method that makes them different from the real world?" — a
+fresh read of the code (not just prior docs) turned up several genuine gaps. Implemented:
+
+- [x] **Adaptive band hard safety clamp** — nothing previously stopped the duty-cycle × tariff
+      multipliers from stacking arbitrarily wide. Added `ADAPTIVE_BAND_MAX_MULT=1.5` /
+      `ADAPTIVE_BAND_MIN_MULT=0.5` clamp, plus an RH-aware override (if humidity has drifted >15
+      points from `rhTarget`, band is forced toward the tight end regardless of tariff) — a real BMS
+      never lets a cost-driven tuning routine chase cheap electricity at the expense of product safety.
+- [x] **VFD condenser fan now has its own metered power draw** — previously the head-pressure-floating
+      benefit (§4c) came from a real actuator (the condenser fan) that was never itself charged any
+      electricity. Added `FAN_POWER_FRACTION=0.04` (≈4% of rated compressor capacity): fixed-speed for
+      Two-position/Adaptive, scales down with capacity for VFD — a real, if partial, offset to VFD's
+      compressor-side savings.
+- [x] **VFD anti-windup by back-calculation** — the PI integral term was previously just clamped to a
+      hand-picked ±2, a blunt approximation. Replaced with proper back-calculation (`KB_ANTIWINDUP=0.5`):
+      the integral only accumulates further when the output isn't already saturated.
+- [x] **VFD feedforward** — a real commissioned system anticipates known disturbances instead of purely
+      reacting after temperature has drifted. Added a demand nudge ahead of a shift start (≤15 min
+      out) and a booked Zone A truck delivery (≤20 min out), using data the sim already has.
+- [x] **VFD drive-side fixed loss** — `VFD_DRIVE_LOSS=0.97`, a small flat efficiency cost (inverter/
+      harmonics) that exists regardless of speed, on top of the part-load curve. Without it, "VFD" was
+      implicitly free efficiency at the drive level, which isn't real.
+- [x] **High-head-pressure safety cutout** — the sim previously had no fault/trip path at all, only
+      ever-cooling equipment. Added a trip that cuts the compressor for a 5-minute cooldown if
+      condensing temperature (ambient + condenser approach) exceeds 55°C. **Caught and fixed a real
+      bug while validating this**: the first version tripped on "lift" (condensing temp − target),
+      which meant deep-freeze (target −18°C) tripped almost continuously — target being very cold
+      doesn't raise discharge pressure; a real high-pressure switch senses discharge pressure alone,
+      independent of the evaporating side. Fixed to trip on condensing temperature only. Verified via
+      the 10-day standalone harness: 0 spurious trips across both a produce and a deep-freeze scenario
+      under normal seasonal ambient, confirming this is now a rare-event safety path, not a routine one.
+- [x] **Cycle-driven mechanical wear** — compressor capacity previously degraded only from cumulative
+      runtime-hours; cycle count was tracked as a benchmark metric but never actually cost anything, so
+      a mode cycling 400x had no more long-run wear than one cycling once. Added
+      `WEAR_PER_CYCLE = 0.10/50000` (≈10% capacity loss per 50,000 starts) alongside the existing
+      hourly wear rate.
+- [x] **Emergent finding surfaced by this pass**: re-benchmarking a deep-freeze scenario (meat,
+      target −18°C) shows VFD's advantage nearly disappears (₹7809 vs rule's ₹7634 — VFD is actually
+      *slightly worse* there) — because deep-freeze runs near-100% duty almost regardless of mode,
+      leaving little load variability for VFD/head-pressure-floating to exploit, while VFD's fan/drive
+      losses apply constantly. This matches why real deep-freeze plants are often simple fixed-speed
+      systems rather than VFD retrofits — a genuine result of the physics, not tuned to match this
+      expectation after the fact.
+
+**Deliberately deferred (flagged, not implemented this round) — larger architectural risk, lower
+value for the effort:**
+- [ ] **Multiple staged compressors per zone (lead-lag).** Real facilities of any size often run 2+
+      smaller compressors per chamber rather than one large on/off or VFD unit. This would require
+      restructuring the per-zone `compressorOn[i]`/`capacityFraction[i]` scalars into per-unit arrays
+      throughout `stepCompressor`/`stepZone`/the twin estimator/UI — a significant rework, not a
+      localized fix. Left for a dedicated future pass rather than a shallow bolt-on.
+- [ ] **Locked-rotor/inrush as a real current-vs-time profile** (rather than a flat one-time kWh
+      charge) — would let voltage-sag/power-quality effects on other loads be modeled, but is a lot of
+      new fidelity for a fairly niche, small-magnitude effect.
+- [ ] **Adaptive-band memory across days** (e.g., learning "this is always a hot Tuesday afternoon")
+      — real adaptive deadband tuning is usually periodic manual retuning from trend logs, not
+      continuous learning; would need a genuine data structure (rolling day-of-week/hour profile) to
+      do honestly rather than a token gesture.
+- [ ] **Contactor/relay electrical wear as its own failure mode** (contact resistance increasing,
+      eventual replacement) distinct from the compressor capacity wear above — cycle count now feeds
+      compressor wear, but the relay/contactor itself has no separate failure path or maintenance
+      trigger yet.
+
 ## 5. NEW: AI-based control approach (4th mode)
 
 - [ ] Define what "AI-based" means concretely for this sim — proposed scope: a learned policy
