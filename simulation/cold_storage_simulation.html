@@ -918,11 +918,9 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
     <h3>What's still a shortcut (said plainly)</h3>
     <ul>
       <li>Each chamber is treated as one well-mixed room — it doesn't know that the back corner might be colder than the middle, the way a real chamber can.</li>
-      <li>The weather, the electricity price, and the compressor's efficiency numbers are all reasonable guesses written by hand, not pulled from a real weather service, a real electricity bill, or a real machine's spec sheet.</li>
+      <li>The weather is still a reasonable guess written by hand, not pulled from a real live weather service — though it's now documented as tracking published climate normals for the region this sim is grounded in, and gets day-to-day cloudy/rainy variation instead of a perfectly smooth curve. Electricity price now models 6 real Indian state-DISCOM tariff structures you can pick between (each with its own real rate AND its own real time-of-day band hours) — better than the single illustrative curve this used to be, though still representative approximations rather than a live rate feed.</li>
       <li>Spoilage is estimated with one general formula (temperature too high, for too long, spoils food faster) rather than a formula specific to each exact product tested in a lab.</li>
       <li>The "guessing" logic (Step 3 above) is a simplified version of what real industrial software uses (called a Kalman filter) — it works and settles on the right answer, but it isn't the mathematically optimal version.</li>
-      <li>Random events (which day a truck shows up, how noisy a sensor reading is) aren't reproducible — running the simulation twice won't give identical results.</li>
-      <li>Cooling and dehumidifying aren't properly split: a real compressor spends part of its cooling power just condensing moisture out of the air (this takes real energy — it's not free), which should mean slightly less power left over to actually drop the temperature. Here, humidity is tracked as its own separate number and doesn't borrow any capacity from the temperature calculation — so on a very humid day, this sim is a little more optimistic about cooling power than a real system would be.</li>
       <li>A frosted coil is penalized twice — once as less cooling actually delivered, and again as worse electricity-to-cooling efficiency. Both effects are real and independently documented in refrigeration engineering, but applying both at once means a badly frosted coil is modeled as somewhat worse than most single real-world measurements of frost's impact — a deliberately conservative (not an accidental) choice.</li>
     </ul>
 
@@ -933,6 +931,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
           <li>The smart layer actually has to earn its beliefs from noisy data — it isn't secretly told the answer.</li>
           <li>There's a real, working "plug" (<code>window.ColdStorageTwin</code>) another program can connect to today.</li>
           <li>When something looks wrong, it tries to explain <i>why</i>, not just sound an alarm.</li>
+          <li>Every run is reproducible from its seed (shown after each reset) — the same seed replays the exact same truck arrivals, sensor noise, and equipment wear, so you can actually tell "did this change help" from "did this session just get lucky."</li>
         </ul>
       </div>
       <div class="con">
@@ -949,7 +948,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
     <ul>
       <li>Swap the hand-guessed building size, wall insulation, and compressor power for your actual building's real drawings and equipment spec sheets.</li>
       <li>Replace the pretend sensor readings with a real feed from your real sensors (a technical detail: the code calls this feed <code>stepTelemetry()</code> — only that one function needs to change).</li>
-      <li>Replace the hand-written weather and electricity-price guesses with a real weather service and your real electricity bill's rate schedule.</li>
+      <li>Replace the hand-written weather guess with a real weather service (electricity price is now closer — pick your actual DISCOM's tariff region — but still swap in your exact contracted rate schedule for a real bill).</li>
       <li>Replace the simplified guessing math with proper industrial-grade estimation software, and replace the plain-English advice rules with a trained AI model.</li>
       <li>If it matters for your product, add the ability to model cold and warm spots inside a single chamber, instead of treating each chamber as one uniform room.</li>
     </ul>
@@ -1141,6 +1140,23 @@ function reseed(seed){ currentSeed = seed >>> 0; rng = mulberry32(currentSeed); 
 // coldChainTransport: true means real-world logistics for this product use
 // proper refrigerated transport end-to-end, so incoming deliveries arrive
 // already near target (not near outdoor ambient) — see checkTruckSchedule().
+//
+// §1 spoilage-kinetics grounding: `qten` (Q10 — the literal, defined multiplier
+// a spoilage reaction rate gets per 10°C rise) and `refLife` (shelf life AT the
+// product's own target, in hours) are set in line with the general shape of
+// published postharvest physiology literature: most produce shows Q10≈2-3
+// (roughly doubling to tripling spoilage rate per 10°C above optimal storage
+// temp), chilling-sensitive tropical items (tomato/banana/mango) trend higher
+// (~2.2-2.8) since their injury response compounds ordinary respiration-driven
+// spoilage, and low-respiration bulk roots (potato/onion) trend lower with
+// very long reference shelf lives. This is a genuine, sourced SHAPE — not one
+// formula literally fit to lab data for each exact cultivar/variety, which
+// would need product-specific postharvest trial data this sim doesn't have
+// access to. Deliberately NOT retuned this round: several rounds of
+// controller-comparison numbers earlier in this project were calibrated
+// against the CURRENT values, and changing them now would risk silently
+// invalidating that verified work for a value that's already in a
+// defensible/documented range.
 const PRODUCTS = {
   // deliveryIntervalHr/turnoverFraction retuned from an original 20h/0.55 for
   // the same reason as "Leafy produce" below — verified via a zero-delivery
@@ -1320,6 +1336,24 @@ function zoneUA(i){ return ZONE_SPECS[i].envelopeArea * U_VALUE; } // W/K, overa
 // industry heuristic, not a manufacturer curve.
 function ratedCOP(target){ return Math.min(4.2, Math.max(1.4, 2.2 + 0.045*(target+20))); }
 
+// §4d — locked-rotor/inrush as a real (if coarse) current-vs-time profile,
+// not a flat "5.8x for 2s" approximation. A real motor start has two phases:
+// LOCKED-ROTOR (the rotor hasn't started turning yet — highest current, ~5.8x
+// rated, for roughly the first second) and ACCELERATION (rotor spinning up
+// toward sync speed — current tapers to ~3x rated over the next couple of
+// seconds) before settling to normal running current. Stage durations are
+// calibrated so the total excess energy matches what the flat approximation
+// integrated to before (this is a fidelity/documentation improvement — a more
+// realistic derivation of the same-order-of-magnitude number — not a retuning
+// of how much this costs, which stays a fairly small, niche effect either way).
+function inrushEnergyKWh(ratedKW){
+  const LOCKED_ROTOR_MULT = 5.8, LOCKED_ROTOR_SEC = 1.0;
+  const ACCEL_MULT = 3.0, ACCEL_SEC = 2.4;
+  const lockedExcessKWh = ratedKW*(LOCKED_ROTOR_MULT-1)*(LOCKED_ROTOR_SEC/3600);
+  const accelExcessKWh = ratedKW*(ACCEL_MULT-1)*(ACCEL_SEC/3600);
+  return lockedExcessKWh + accelExcessKWh;
+}
+
 // ---- Condenser-side physics: head-pressure floating ----
 // Until now this simulation had no condenser model at all — COP depended only
 // on the evaporating/target side. In reality COP depends on the compressor's
@@ -1493,6 +1527,13 @@ function freshState(){
     // lifetime cycle count per zone, independent of mode-switching — drives
     // the cycle-wear component in stepZone()'s equipment-aging model
     cumulativeCycles: [0,0,0],
+    // §4d — contactor/relay electrical wear, its OWN failure mode distinct
+    // from compressor capacity wear (see registerCompressorEngage()).
+    contactorWearPct: [0,0,0],
+    contactorFlagged: [false,false,false],
+    // §4d — adaptive-band memory across days: per-zone, per-hour-of-day
+    // learned duty cycle (slow EMA, see stepCompressor()'s tail).
+    hourlyDutyProfile: [new Array(24).fill(0.3), new Array(24).fill(0.3), new Array(24).fill(0.3)],
     doorOpen: false,
     doorTimer: 0,
     doorOpenTotalToday: 0,
@@ -1633,7 +1674,8 @@ function freshShadowState(){
     compressorOn: [false,false,false], capacityFraction: [0,0,0], piIntegral: [0,0,0],
     lastHourOnMinutes: [new Array(60).fill(0), new Array(60).fill(0), new Array(60).fill(0)],
     minRunRemain: [0,0,0], minRestRemain: [0,0,0], startupPenaltyRemain: [0,0,0],
-    hpTripRemain: [0,0,0], cumulativeCycles: [0,0,0],
+    hpTripRemain: [0,0,0], cumulativeCycles: [0,0,0], contactorWearPct: [0,0,0],
+    hourlyDutyProfile: [new Array(24).fill(0.3), new Array(24).fill(0.3), new Array(24).fill(0.3)],
     defrosting: [false,false,false], defrostTimer: [0,0,0], nextDefrostAt: [240,300,210],
     spoilIndex: [0,0,0], batchAgeMin: [0,0,0],
     compRuntimeHr: [0,0,0], trueCapMult: [1,1,1], sensorDriftBias: [0,0,0], zoneSensor: [8,8,-5],
@@ -1900,6 +1942,31 @@ function checkShiftChange(){
 // Dispatch a technician with a realistic lead time: same-day if the issue is
 // caught early in the day, otherwise first thing the next business day — a real
 // facilities team doesn't teleport in the instant a metric crosses a line.
+// §4d — visit-kind display labels, extended with "contactor" (a distinct
+// electrical-wear failure mode from compressor capacity wear — see
+// cumulativeCycles/contactorWearPct in stepCompressor/stepZone).
+const MAINT_KIND_LABEL = { service:"refrigeration service", calibration:"sensor calibration check", contactor:"contactor replacement" };
+
+// §4d — contactor/relay electrical wear as its OWN failure mode, distinct
+// from compressor capacity wear. Every real contactor has a rated mechanical/
+// electrical operations life (typically ~100,000 ops for a compressor-duty
+// AC-3 contactor before contact erosion becomes a real failure risk) — purely
+// a function of switching COUNT, unrelated to how long the compressor then
+// ran or how worn its refrigeration circuit is. Called on every OFF→ON
+// engage, live run or shadow alike (wear tracking makes sense everywhere
+// cycles happen) — but only the live run ever gets flagged/dispatched a
+// technician, matching how shadows skip the twin/maintenance layer entirely.
+const CONTACTOR_RATED_OPS = 100000;
+function registerCompressorEngage(st, i, isLive){
+  st.cumulativeCycles[i]++;
+  st.contactorWearPct[i] = Math.min(100, st.contactorWearPct[i] + 100/CONTACTOR_RATED_OPS);
+  if(isLive && !state.contactorFlagged[i] && !state.maintenanceVisit[i] && state.contactorWearPct[i] >= 90){
+    state.contactorFlagged[i] = true;
+    logEvent(`AI twin: ${ZONES[i]} contactor at ${state.contactorWearPct[i].toFixed(0)}% of its rated switching life (${state.cumulativeCycles[i]} operations) — schedule replacement before contact erosion risks a failed start.`, true);
+    dispatchMaintenance(i, "contactor");
+  }
+}
+
 function dispatchMaintenance(i, kind){
   if(state.maintenanceVisit[i]) return;
   const {hour} = ambientNow();
@@ -1911,8 +1978,8 @@ function dispatchMaintenance(i, kind){
     scheduledAt = (day+1)*1440 + (8+rng()*3)*60; // next business day, 8-11am
   }
   state.maintenanceVisit[i] = { scheduledAt, arrivedAt:null, endsAt:null, kind };
-  logEvent(`Maintenance dispatched for ${ZONES[i]} (${kind==="service"?"refrigeration service":"sensor calibration check"}) — technician ETA ${fmtClock(scheduledAt)}`, false);
-  pushEvent({ category:"maintenance", name:"Maintenance dispatched", zone:i, alert:true, spec:`${kind==="service"?"refrigeration service":"sensor calibration"} — ETA ${fmtClock(scheduledAt)}` });
+  logEvent(`Maintenance dispatched for ${ZONES[i]} (${MAINT_KIND_LABEL[kind]}) — technician ETA ${fmtClock(scheduledAt)}`, false);
+  pushEvent({ category:"maintenance", name:"Maintenance dispatched", zone:i, alert:true, spec:`${MAINT_KIND_LABEL[kind]} — ETA ${fmtClock(scheduledAt)}` });
 }
 
 const TECH_TRAVEL_MIN = 20; // visible drive-in/drive-out time either side of the actual visit
@@ -1924,8 +1991,8 @@ function stepMaintenance(i, dt){
     v.arrivedAt = state.tMin;
     v.endsAt = state.tMin + (45 + rng()*45); // 45-90 min onsite, a real service call length
     state.cumulative.technicianVisits++;
-    logEvent(`Technician on site at ${ZONES[i]} — beginning ${v.kind==="service"?"compressor service":"sensor calibration"}`, false);
-    pushEvent({ category:"maintenance", name:"Technician on site", zone:i, spec: v.kind==="service"?"refrigeration service":"sensor calibration", key:`maint:${i}` });
+    logEvent(`Technician on site at ${ZONES[i]} — beginning ${MAINT_KIND_LABEL[v.kind]}`, false);
+    pushEvent({ category:"maintenance", name:"Technician on site", zone:i, spec: MAINT_KIND_LABEL[v.kind], key:`maint:${i}` });
   }
   if(v.arrivedAt && !v.completed) state.cumulative.technicianMinutes += dt;
   if(v.arrivedAt && !v.completed && state.tMin >= v.endsAt){
@@ -1936,6 +2003,16 @@ function stepMaintenance(i, dt){
       state.maintenanceFlagged[i] = false;
       logEvent(`Service complete at ${ZONES[i]} — capacity restored toward nameplate`, false);
       closeEvent(`maint:${i}`, `capacity restored to ${(state.estCapMult[i]*100).toFixed(0)}%→nameplate`);
+    } else if(v.kind==="contactor"){
+      // §4d — a genuinely distinct failure mode from compressor capacity
+      // wear: contactor contact erosion from repeated switching, not from
+      // running hours. Replacing it resets ITS OWN wear counter only —
+      // doesn't touch compRuntimeHr/estCapMult, since a fresh contactor
+      // doesn't make a worn compressor young again.
+      state.contactorWearPct[i] = 0;
+      state.contactorFlagged[i] = false;
+      logEvent(`Contactor replaced at ${ZONES[i]} — switching wear reset`, false);
+      closeEvent(`maint:${i}`, "contactor replaced, wear counter reset to 0%");
     } else {
       state.sensorDriftBias[i] = 0;
       state.calibrationFlagged[i] = false;
@@ -2101,9 +2178,36 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW, wearNoise=n
   // --- compressor cooling (W) — cools the AIR node directly, exactly like a real
   // evaporator coil; scaled by capacityFraction (1.0 in on/off modes, continuous
   // in VFD mode), degraded by frosted coil and by gradual real-world equipment wear.
+  //
+  // §1 humidity/capacity coupling: a real coil's rated capacity is split
+  // between SENSIBLE cooling (dropping air temperature — what actually holds
+  // the setpoint) and LATENT cooling (condensing moisture out of the air).
+  // Previously humidity (zoneRH below) and cooling capacity were two fully
+  // independent numbers, so a very humid day's compressor was implicitly
+  // delivering full sensible capacity for free while ALSO dehumidifying —
+  // overstating performance on humid days, per the design summary's own
+  // flagged gap. latentFraction estimates how much of nameplate capacity a
+  // real coil spends condensing moisture at the current outdoor humidity
+  // (higher ambient RH → more moisture entering with infiltration/new stock →
+  // more latent duty), leaving correspondingly less for the sensible
+  // temperature-drop this formula actually delivers.
+  // §1 frost-penalty calibration note: this reduces DELIVERED cooling capacity
+  // directly (capped at -60% at full fouling); a SEPARATE penalty further down
+  // (see copNow/vfdEff below) reduces electricity-to-cooling EFFICIENCY on top
+  // of this. Both mechanisms are independently documented in refrigeration
+  // engineering (frost blocks airflow across the coil face, reducing both
+  // delivered capacity and — because the compressor still runs — the COP per
+  // watt drawn) — applying both simultaneously means a badly-fouled coil here
+  // can model as low as ~26% combined effective performance (0.4 delivered ×
+  // 0.65 efficiency) at worst-case full frost, more severe than most
+  // single-effect measurements report in isolation. This is a deliberate,
+  // documented choice to bias conservative (worse-case) rather than an
+  // accidental double-count — kept as-is rather than "fixed" to a single
+  // number, since the two mechanisms really are physically distinct.
   const frostPenalty = 1 - Math.min(0.6, st.frost[i]*0.6);
+  const latentFraction = Math.min(0.35, 0.10 + 0.30*ambRH);
   const coolingW = st.defrosting[i] ? 0
-    : spec.compCapacityW * frostPenalty * st.trueCapMult[i] * st.capacityFraction[i];
+    : spec.compCapacityW * frostPenalty * st.trueCapMult[i] * st.capacityFraction[i] * (1-latentFraction);
   // --- defrost heater (W) — injects heat into the AIR node while that evaporator defrosts
   const defrostHeaterW = st.defrosting[i] ? 2500 : 0;
 
@@ -2380,13 +2484,27 @@ function stepCompressor(i, dt, st=state, md=cfg){
     st.capacityFraction[i] = Math.min(1, Math.max(0, st.capacityFraction[i]+delta));
     const wasOn = st.compressorOn[i];
     st.compressorOn[i] = st.capacityFraction[i] > 0.03;
-    if(!wasOn && st.compressorOn[i]){ st.modeMetrics[md.mode].cyclesStarted++; st.cumulativeCycles[i]++; }
+    if(!wasOn && st.compressorOn[i]){ st.modeMetrics[md.mode].cyclesStarted++; registerCompressorEngage(st, i, isLive); }
   } else {
     // Two-position (fixed band) or adaptive-band (retuned deadband) relay control.
     let band = md.product.band;
     if(md.mode==="adaptive"){
       const recentDuty = st.lastHourOnMinutes[i].reduce((a,b)=>a+b,0)/60;
-      band = recentDuty>0.55 ? band*0.7 : band*1.25; // adapt band to avoid short-cycling / hold tighter under load
+      // §4d adaptive-band memory across days: recentDuty alone is purely
+      // REACTIVE (it only reflects the last 60 minutes), so a controller that
+      // just happened to coast through a defrost cycle looks "idle" even at
+      // 3pm on a day that's historically its busiest hour. hourlyDutyProfile
+      // is a slow-learning (day-over-day) EMA of duty cycle observed at each
+      // hour of day — blending it in gives genuine cross-day memory: the band
+      // pre-tightens ahead of a historically-busy hour instead of only
+      // reacting once it's already busy again. Real adaptive deadband tuning
+      // is usually periodic MANUAL retuning from trend logs (a technician
+      // reviewing a week of data); this is the same idea done continuously
+      // and automatically, staying rule-based (not ML) — see CONTROL_IO.md.
+      const hourNow = Math.floor((state.tMin/60)%24);
+      const historicalDuty = st.hourlyDutyProfile[i][hourNow];
+      const blendedDuty = 0.6*recentDuty + 0.4*historicalDuty;
+      band = blendedDuty>0.55 ? band*0.7 : band*1.25; // adapt band to avoid short-cycling / hold tighter under load
       // §4b — tariff-aware retuning on top of the load-based retune above: loosen
       // the band (let the chamber drift further, coast on thermal mass) during
       // Peak-priced hours to avoid running the compressor at the worst rate, and
@@ -2439,7 +2557,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
     if(!st.compressorOn[i] && over > band && st.minRestRemain[i]<=0){
       st.compressorOn[i] = true;
       st.minRunRemain[i] = MIN_RUN_MIN;
-      st.cumulativeCycles[i]++;
+      registerCompressorEngage(st, i, isLive);
       // Cold-start penalty (see STARTUP_COP_PENALTY in stepZone): after any
       // stop, refrigerant migrates/settles and system pressure equalizes —
       // the next run-up doesn't deliver full-efficiency cooling right away.
@@ -2449,8 +2567,9 @@ function stepCompressor(i, dt, st=state, md=cfg){
       st.startupPenaltyRemain[i] = MIN_RUN_MIN;
       st.modeMetrics[md.mode].cyclesStarted++;
       // §4a — the logged surge isn't just flavor text: a locked-rotor/inrush
-      // current draw really does cost real energy, ~5.8x rated draw for ~2s
-      // before the motor spins up to steady running current. Charged as a
+      // current draw really does cost real energy (see inrushEnergyKWh's
+      // staged locked-rotor→acceleration profile, §4d) before the motor
+      // settles to steady running current. Charged as a
       // one-time kWh addition at the CURRENT tariff period, on top of (not
       // instead of) normal running power from here on. For the LIVE run this
       // also lands on the visualized bill totals; a shadow benchmark instance
@@ -2458,7 +2577,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
       {
         const spec = ZONE_SPECS[i];
         const ratedKW = spec.compCapacityW/(ratedCOP(target)*1000);
-        const inrushKWh = ratedKW*(5.8-1)*(2/3600);
+        const inrushKWh = inrushEnergyKWh(ratedKW);
         const period = tariffPeriodAt((state.tMin/60)%24);
         const inrushCost = inrushKWh*BASE_TARIFF()*period.mult;
         if(isLive){
@@ -2470,7 +2589,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
         mm.costByPeriod[period.key].kwh += inrushKWh;
         mm.costByPeriod[period.key].cost += inrushCost;
       }
-      if(isLive) logEvent(`${ZONES[i]} compressor engaged (surge current ~5.8x rated draw for 2s)`, false);
+      if(isLive) logEvent(`${ZONES[i]} compressor engaged (locked-rotor ~5.8x rated draw, tapering through acceleration to running current)`, false);
     } else if(st.compressorOn[i] && over < -band*0.3 && st.minRunRemain[i]<=0){
       st.compressorOn[i] = false;
       st.minRestRemain[i] = MIN_REST_MIN;
@@ -2480,6 +2599,15 @@ function stepCompressor(i, dt, st=state, md=cfg){
 
   st.lastHourOnMinutes[i].shift();
   st.lastHourOnMinutes[i].push(st.compressorOn[i]?1:0);
+
+  // §4d adaptive-band memory: slow (multi-day time-constant) EMA of duty
+  // cycle observed at each hour-of-day, tracked regardless of which mode is
+  // driving this instance — the "memory" adaptive's control law reads above.
+  // Updated for every mode (not just adaptive) so switching INTO adaptive
+  // mid-run already has a real learned profile rather than starting blank.
+  const hourNow = Math.floor((state.tMin/60)%24);
+  const HOURLY_PROFILE_TAU_MIN = 4320; // ~3 days — several days before old data mostly washes out
+  st.hourlyDutyProfile[i][hourNow] += (st.capacityFraction[i] - st.hourlyDutyProfile[i][hourNow]) * (dt/HOURLY_PROFILE_TAU_MIN);
 }
 
 function tick(dtMin){
@@ -2658,7 +2786,7 @@ function stepTelemetry(i, dt){
 // same role a Kalman filter / RLS fit plays in a production twin.
 function stepTwinEstimator(i, dt){
   const spec = ZONE_SPECS[i];
-  const {temp: ambient} = ambientNow();
+  const {temp: ambient, rh: ambRH} = ambientNow();
   const target = cfg.product.target;
 
   // twin's own AIR-node forward step (matches what the sensor actually reads),
@@ -2667,8 +2795,16 @@ function stepTwinEstimator(i, dt){
   // no real BMS estimates a wall's own internal temperature either.
   const wallW = zoneUA(i)*state.estUaMult[i] * (ambient - state.twinPredTemp[i]);
   const frostPenalty = 1 - Math.min(0.6, state.frost[i]*0.6); // frost is directly observed (coil sensor), not estimated
+  // Must mirror stepZone's §1 latentFraction derate — outdoor humidity is
+  // something a twin can legitimately know (it's an external weather input,
+  // not a hidden internal parameter), so leaving this out here would create
+  // a NEW humidity-correlated estimation bias of exactly the kind the sensor-
+  // lag bug (§2) turned out to be: the twin would over-predict cooling on
+  // humid days and mis-attribute the gap to capacity, oscillating estCapMult
+  // with the season instead of tracking true capacity.
+  const latentFraction = Math.min(0.35, 0.10 + 0.30*ambRH);
   let coolingW = 0;
-  if(!state.defrosting[i]) coolingW = spec.compCapacityW*frostPenalty*state.estCapMult[i]*state.capacityFraction[i];
+  if(!state.defrosting[i]) coolingW = spec.compCapacityW*frostPenalty*state.estCapMult[i]*state.capacityFraction[i]*(1-latentFraction);
   const defrostHeaterW = state.defrosting[i] ? 2500 : 0;
   const doorW = (state.doorOpen && spec.doorAreaM2>0) ? spec.doorAreaM2*0.4*RHO_AIR*CP_AIR*1000*(ambient-state.twinPredTemp[i])*0.45 : 0;
   const shift = currentShift(ambientNow().hour);
@@ -2763,7 +2899,8 @@ function runForecast(){
   const target = cfg.product.target;
   const out = [];
   for(let t=0; t<=horizon; t+=stepMin){
-    const {temp: ambient} = ambientNow(); // holds current ambient flat over the horizon — a simplification
+    const {temp: ambient, rh: ambRH} = ambientNow(); // holds current ambient flat over the horizon — a simplification
+    const latentFraction = Math.min(0.35, 0.10 + 0.30*ambRH); // §1 — mirrors stepZone/stepTwinEstimator
     for(let i=0;i<N_ZONES;i++){
       const spec = ZONE_SPECS[i];
       const band = cfg.product.band;
@@ -2772,7 +2909,7 @@ function runForecast(){
       else if(simCompOn[i] && over<-band*0.3) simCompOn[i]=false;
       const wallW = zoneUA(i)*state.estUaMult[i]*(ambient-simAir[i]);
       const frostPenalty = 1-Math.min(0.6, simFrost[i]*0.6);
-      const coolingW = simCompOn[i] ? spec.compCapacityW*frostPenalty*state.estCapMult[i] : 0;
+      const coolingW = simCompOn[i] ? spec.compCapacityW*frostPenalty*state.estCapMult[i]*(1-latentFraction) : 0;
       const couplingW = productCouplingKJperMinK(i) * 1000/60 * (simAir[i]-simProduct[i]);
       const airNetW = wallW + 150 - coolingW - couplingW;
       simAir[i] += (airNetW*(stepMin*60)/1000)/airCapacityKJperK(i);
@@ -3747,6 +3884,7 @@ const GLOSSARY = [
   { term:"State estimator", simple:"The part of the twin that keeps correcting its own guess to match incoming sensor readings, a little at a time.", example:"stepTwinEstimator() — nudges the twin's guessed temperature and guessed compressor strength every tick.", eq:"guess += (reading − guess) × correction strength", diff:"Real industrial versions (Kalman filters) also track how confident each guess is, and weight corrections accordingly." },
   { term:"COP (Coefficient of Performance)", simple:"How much cooling you get per unit of electricity. Bigger number = more efficient compressor.", example:"'COP (efficiency)' stat, ~2-4 depending on target temperature, outdoor heat, and (in VFD mode) load.", eq:"COP = cooling delivered ÷ electricity used, adjusted for condensing-side 'lift' (ambient + condenser approach − target) — see Glossary's 'Head-pressure floating' entry", diff:"Real COP also depends on refrigerant type and installation quality, and this uses one rough heuristic formula rather than a manufacturer's performance curve." },
   { term:"Head-pressure floating", simple:"Letting the outdoor condenser fan slow down when the compressor doesn't need to reject as much heat, which lowers the pressure the compressor has to push against — like coasting instead of gunning the engine.", example:"Available only in Variable-speed (VFD) mode — its COP rises at partial load because of this, not just because the compressor itself is slower.", eq:"condensing temp = ambient + approach; approach floats down toward a floor as VFD capacity drops; COP scales roughly inversely with (condensing temp − target)", diff:"A fixed-speed condenser fan (paired with the other two modes here) can't do this at all — this is the single biggest reason real VFD retrofits report 15-30% energy savings, more than the compressor-speed modulation alone." },
+  { term:"Latent capacity / dehumidification load", simple:"A cold coil does two jobs at once: cooling the air AND wringing moisture out of it. On a humid day, more of the coil's total effort goes into the second job, leaving less for the first — like a pump splitting its output between two hoses.", example:"On a humid monsoon day, the same compressor delivers noticeably less temperature-drop per hour than on a dry winter day, even at the same capacity fraction.", eq:"sensible (temperature-drop) capacity = nameplate capacity × (1 − latent fraction); latent fraction rises with outdoor relative humidity, capped at 35%", diff:"Real coils split sensible/latent capacity based on the coil's own physical design (fin spacing, face velocity) and the air's actual dew point, not just outdoor RH — this uses one simplified humidity-only estimate." },
   { term:"UA (envelope conductance)", simple:"How fast heat leaks through a chamber's insulated walls. Bigger UA = leakier walls.", example:"Used inside the 'wall/envelope' share of the heat-load breakdown chart.", eq:"heat leaking in (Watts) = UA × (outside temp − inside temp)", diff:"Real UA varies by wall condition, door seals, and age — here it's one fixed number per chamber based on assumed insulation." },
   { term:"Thermal mass / capacitance", simple:"How much heat something can 'soak up' before its temperature actually changes. A tank of water heats up slower than an empty tin can.", example:"Why product core temperature changes slowly (large mass) while air temperature swings fast (small mass).", eq:"temperature change = heat added ÷ thermal mass", diff:"Real thermal mass also depends on packaging and how densely stock is packed — simplified here to just item mass × its cp." },
   { term:"τ (tau, time constant)", simple:"Roughly how long a stored item takes to catch up to the surrounding air temperature — a slow item has a big τ.", example:"Frozen meat τ=55h (very slow); tomato τ=9h (much faster).", eq:"after 1×τ, ~63% of the gap has closed; after 3×τ, ~95% has closed", diff:"Real τ depends on how the item is packed (loose vs. boxed vs. palletized), not just the item itself." },

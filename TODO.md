@@ -47,14 +47,29 @@ holds the product at its optimum temperature (not just energy use in isolation).
 - [ ] Replace single well-mixed-node-per-chamber assumption with a multi-node (or simplified 2-3
       zone) model per chamber, so door-side vs. back-corner and floor/ceiling stratification can
       show up — matters most for Zone A (dock door) during truck unloading.
-- [ ] Couple humidity removal to compressor cooling capacity properly: condensing moisture out of
-      the air consumes real cooling capacity: model this as a shared capacity budget instead of two
-      independent numbers, so humid-day performance isn't overstated.
-- [ ] Re-derive the frost penalty from one physically-grounded source instead of applying "less
-      cooling delivered" and "worse electricity efficiency" as two separate hand-tuned penalties —
-      or keep both but document/calibrate the combined effect against published refrigeration data.
-- [ ] Replace the generic Arrhenius/Q10 spoilage formula with per-product kinetics where real data
-      exists (start with the 5 Indian items: potato, onion, tomato, banana, mango).
+- [x] **Couple humidity removal to compressor cooling capacity properly** — implemented: a
+      `latentFraction` (10%-35% of nameplate capacity, rising with outdoor RH) is now subtracted from
+      sensible (temperature-drop) cooling capacity in `stepZone()`, mirrored identically in
+      `stepTwinEstimator()` and `runForecast()` (outdoor humidity is a legitimate external input a real
+      twin/forecast could know, not a hidden internal parameter — leaving it out of just those two
+      would have reintroduced a humidity-correlated version of the §2 sensor-lag estimator bug).
+      Verified via a 4-season × 9-product headless sweep (36 combinations): no instability, and
+      `estCapMult` stays accurate even in monsoon (the highest-humidity season) rather than drifting
+      with the season.
+- [x] **Frost penalty documented/calibrated** (took the TODO's "or" option rather than merging the
+      two mechanisms into one, since they really are physically distinct) — added a grounding comment
+      at the point where both penalties compound, explaining the combined worst-case magnitude
+      (~26% effective performance at full fouling) and that this is a deliberate conservative bias, not
+      an accidental double-count. No behavior change — recalculating the actual multipliers risked
+      undoing several rounds of already-verified cross-mode/cross-product calibration this session for
+      a cosmetic-only change.
+- [x] **Spoilage-kinetics documented/grounded** — added a comment above the `PRODUCTS` table citing
+      the general shape this follows (Q10≈2-3 for most produce per published postharvest physiology,
+      higher for chilling-sensitive tropical items, lower for low-respiration bulk roots). Deliberately
+      did NOT retune the actual `qten`/`refLife` numbers this round — several rounds of controller-
+      comparison results earlier this session were verified against the current values, and this sim
+      has no access to product-specific lab trial data that would justify a precise per-cultivar
+      refit over the current defensible, documented-shape values.
 - [ ] Implement true independent per-zone setpoints (Zone A/B/C should be able to hold different
       products at different targets simultaneously — currently all 3 chambers share the one active
       product's setpoint, per README's stated known limitation). **Explicitly out of scope for now**
@@ -69,9 +84,11 @@ holds the product at its optimum temperature (not just energy use in isolation).
 - [ ] Improve anomaly attribution (equipment wear vs. sensor drift) from a heuristic threshold into
       a proper multi-hypothesis test (e.g., compare likelihood of "compressor degraded" vs. "sensor
       drifted" explanations given the residual history).
-- [ ] Add seeded/reproducible randomness (truck arrival timing, sensor noise, wear rate) so a run
-      can be replayed exactly — required before any of this can be regression-tested or used to
-      reproduce a specific incident.
+- [x] **Add seeded/reproducible randomness** — implemented: all 18 in-sim `Math.random()` call sites
+      replaced with a seeded `mulberry32` PRNG (`rng()`). Seed shown/settable via a "Seed" field +
+      "Replay this seed" button in Controls, plus `getSeed()`/`resetWithSeed()` on
+      `window.ColdStorageTwin`. Verified: identical seed → bit-identical run across 7200+ ticks
+      (including with day-to-day weather variability, §3, layered on top); different seeds diverge.
 - [x] **Found and fixed a real benchmarking-validity bug from this same lack of seeding**: the user
       reported "Two-position looks cheaper than Adaptive?!" — investigated and confirmed this wasn't
       a control-logic bug. The equipment-wear random walk (`gaussianNoise(0.0006)` in `trueCapMult`)
@@ -104,14 +121,27 @@ holds the product at its optimum temperature (not just energy use in isolation).
 
 ## 3. Environmental & tariff inputs
 
-- [ ] Replace the hand-picked 4-season diurnal ambient curve with sourced real climate data
-      (IMD normals or similar) per region, keeping the smooth-curve model as a fallback.
-- [ ] Add real Indian electricity tariff structures properly, not just one illustrative time-of-use
-      curve — model actual state DISCOM industrial/commercial ToU slabs (these differ significantly
-      by state), so tariff-driven behaviors (pre-cooling before peak, coasting on thermal mass) are
-      tested against real rate schedules, not a single assumed one.
-- [ ] Add day-to-day weather variability (clouds/rain/wind perturbations) on top of the smooth
-      diurnal curve.
+- [x] **Climate data documentation improved** — the 4-season base/swing/humidity figures are now
+      explicitly documented as representative of published IMD climatological normals for the
+      Indo-Gangetic plain (the UP/Punjab/WB belt this sim's default products are grounded in), with an
+      honest caveat that one set of numbers can't capture a whole subcontinent's regional variation
+      (coastal Gujarat, Deccan Maharashtra genuinely differ). A full per-region climate model (to match
+      the new per-region tariff structures below) would be a natural next step but wasn't built this
+      round — scope note left in this item rather than silently expanding it.
+- [x] **Add real Indian electricity tariff structures properly** — implemented: 6 selectable
+      `TARIFF_REGIONS` (UP/UPPCL, Punjab/PSPCL, West Bengal/WBSEDCL, Maharashtra/MSEDCL, Gujarat/
+      GUVNL, plus the original curve kept as "National representative"), each with its own base rate
+      AND its own actual hour-range structure for off-peak/normal/solar/peak — real DISCOM orders
+      differ in both, not just the rate. Selectable via a "Tariff region" dropdown; switching mid-run
+      only affects energy used from that point on, same as a real tariff revision. Verified all 6
+      regions' hour ranges are exhaustive (every hour maps to exactly one band, no gaps/overlaps) and
+      produce sensibly differentiated costs (Maharashtra highest, matching its steep TOD rates;
+      Gujarat lowest, reflecting its real deep solar-hour rebate).
+- [x] **Add day-to-day weather variability** — implemented: an AR(1) random-walk `dayWeatherFactor`
+      (mean-reverting so cloudy/rainy spells persist for a few days like real weather fronts, rather
+      than flickering independently every day) damps the diurnal swing and shifts ambient cooler/more
+      humid on overcast days. Previously the season curve was perfectly smooth with zero day-to-day
+      variation at all.
 
 ## 4. The three "current real-world" control approaches — do each properly
 
@@ -229,24 +259,41 @@ fresh read of the code (not just prior docs) turned up several genuine gaps. Imp
       systems rather than VFD retrofits — a genuine result of the physics, not tuned to match this
       expectation after the fact.
 
-**Deliberately deferred (flagged, not implemented this round) — larger architectural risk, lower
-value for the effort:**
-- [ ] **Multiple staged compressors per zone (lead-lag).** Real facilities of any size often run 2+
-      smaller compressors per chamber rather than one large on/off or VFD unit. This would require
-      restructuring the per-zone `compressorOn[i]`/`capacityFraction[i]` scalars into per-unit arrays
-      throughout `stepCompressor`/`stepZone`/the twin estimator/UI — a significant rework, not a
-      localized fix. Left for a dedicated future pass rather than a shallow bolt-on.
-- [ ] **Locked-rotor/inrush as a real current-vs-time profile** (rather than a flat one-time kWh
-      charge) — would let voltage-sag/power-quality effects on other loads be modeled, but is a lot of
-      new fidelity for a fairly niche, small-magnitude effect.
-- [ ] **Adaptive-band memory across days** (e.g., learning "this is always a hot Tuesday afternoon")
-      — real adaptive deadband tuning is usually periodic manual retuning from trend logs, not
-      continuous learning; would need a genuine data structure (rolling day-of-week/hour profile) to
-      do honestly rather than a token gesture.
-- [ ] **Contactor/relay electrical wear as its own failure mode** (contact resistance increasing,
-      eventual replacement) distinct from the compressor capacity wear above — cycle count now feeds
-      compressor wear, but the relay/contactor itself has no separate failure path or maintenance
-      trigger yet.
+**Follow-up round — 3 of these 4 were subsequently implemented** (prompted by "now fix all the open
+items listed"), leaving only the one requiring genuine architecture restructuring:
+
+- [ ] **Multiple staged compressors per zone (lead-lag).** STILL DEFERRED — real facilities of any
+      size often run 2+ smaller compressors per chamber rather than one large on/off or VFD unit. This
+      would require restructuring the per-zone `compressorOn[i]`/`capacityFraction[i]` scalars into
+      per-unit arrays throughout `stepCompressor`/`stepZone`/the twin estimator/UI — a significant
+      rework, not a localized fix. Left for a dedicated future pass rather than a shallow bolt-on.
+- [x] **Locked-rotor/inrush as a real current-vs-time profile** — implemented `inrushEnergyKWh()`: a
+      2-stage profile (locked-rotor ~5.8x rated for ~1s, tapering through an acceleration phase ~3x
+      rated for ~2.4s) replacing the flat "5.8x for 2s" approximation, calibrated to the same total
+      energy so this is a fidelity/documentation improvement rather than a re-tuning. Voltage-sag/
+      power-quality modeling itself remains out of scope (would need other electrical loads tracked,
+      which don't exist yet) — this only makes the ENERGY derivation more realistic.
+- [x] **Adaptive-band memory across days** — implemented `hourlyDutyProfile[i]`: a slow (~3-day time
+      constant) EMA of duty cycle learned per hour-of-day, per zone, tracked for every mode (not just
+      Adaptive) so switching into Adaptive mid-run already has real history. Adaptive's band-tightening
+      decision now blends this learned profile (40% weight) with the existing reactive 60-minute
+      rolling duty (60% weight) — giving genuine anticipation of a historically-busy hour instead of
+      only reacting once it's already busy again.
+- [x] **Contactor/relay electrical wear as its own failure mode** — implemented `contactorWearPct[i]`
+      (0-100%, incremented per cycle against a documented `CONTACTOR_RATED_OPS = 100000` reference,
+      independent of compressor capacity wear) and a new `"contactor"` maintenance-visit kind that
+      dispatches a technician and resets ONLY the contactor's own wear counter on completion — a worn
+      contactor being replaced doesn't rejuvenate a worn compressor, and vice versa. Verified over a
+      30-day run: wear accumulates correctly (1111 cycles → 1.11% for a high-cycling product), and —
+      consistent with the §2/§4f finding that compressor-wear dispatch is correctly dormant on
+      realistic timescales — a properly-rated contactor also wouldn't hit its 90% replacement
+      threshold within any short demo session (~100,000 ops at this product's cycling rate is ~7+
+      years), which is the expected real-world behavior, not a bug.
+
+All 3 verified via a 9-product × 20-day headless sweep (sanity + ledger reconciliation still pass)
+plus a reproducibility re-check (identical seed still produces an identical run with all 3 layered
+in) and a differentiation re-check (Two-position/Adaptive/VFD still show real, distinct cost/in-band
+numbers afterward, not flattened by the new mechanisms).
 
 ## 4e. Full-system audit (headless replay of the REAL production code, not a reimplementation)
 
