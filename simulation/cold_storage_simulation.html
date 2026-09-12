@@ -747,6 +747,17 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
         </select>
       </div>
       <div class="row">
+        <label class="field" data-tip="ctrl:tariffRegion">Tariff region (DISCOM)</label>
+        <select id="tariffRegionSel">
+          <option value="national" selected>National representative</option>
+          <option value="up">Uttar Pradesh (UPPCL)</option>
+          <option value="punjab">Punjab (PSPCL)</option>
+          <option value="wb">West Bengal (WBSEDCL)</option>
+          <option value="maharashtra">Maharashtra (MSEDCL)</option>
+          <option value="gujarat">Gujarat (GUVNL/Torrent)</option>
+        </select>
+      </div>
+      <div class="row">
         <label class="field" data-tip="ctrl:speed">Sim speed</label>
         <input type="range" id="speedRange" min="1" max="8" value="4" />
       </div>
@@ -754,6 +765,11 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
         <button class="btn primary" id="playBtn" data-tip="ctrl:play">Pause</button>
         <button class="btn" id="truckBtn" data-tip="ctrl:truck">Trigger truck arrival</button>
         <button class="btn" id="resetBtn" data-tip="ctrl:reset">Reset run</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <label class="field" data-tip="ctrl:seed">Seed</label>
+        <input type="number" id="seedInput" style="width:120px" />
+        <button class="btn" id="replaySeedBtn" data-tip="ctrl:replay">Replay this seed</button>
       </div>
     </div>
 
@@ -1082,6 +1098,30 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
 "use strict";
 
 /* ============================================================
+   SEEDED RANDOMNESS (§2) — every stochastic element in this sim (truck
+   jitter, sensor noise, wear random-walk, maintenance-visit timing) now
+   draws from this seeded generator, `rng()`, instead of the browser's raw,
+   unseeded `Math.random()` — so a run can be replayed exactly by reusing
+   its seed, which is required for regression testing and for reproducing
+   a specific reported scenario. mulberry32: small, fast, good-enough
+   statistical quality for a simulation (not cryptographic use). All in-sim
+   randomness must go through `rng()` — a stray direct `Math.random()` call
+   anywhere downstream would silently break reproducibility for that one
+   thing while leaving everything else looking reproducible.
+   ============================================================ */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+let currentSeed = (Date.now() ^ (Math.random()*0xFFFFFFFF)) >>> 0; // fresh by default each page load
+let rng = mulberry32(currentSeed);
+function reseed(seed){ currentSeed = seed >>> 0; rng = mulberry32(currentSeed); }
+
+/* ============================================================
    PHYSICAL MODEL
    ============================================================ */
 
@@ -1140,7 +1180,16 @@ const PRODUCTS = {
 
 // India's four practical seasons, each with a plausible daily-average temp and
 // swing plus a humidity baseline — pick a season, ambientNow() below handles
-// the actual hour-by-hour (and day-by-day, see below) evolution around it.
+// the actual hour-by-hour (and day-by-day, see its dayWeatherFactor use)
+// evolution around it. §3: these base/swing/humidity figures are set to be
+// representative of published IMD climatological normals for the
+// Indo-Gangetic plain (the UP/Punjab/WB potato-and-bulk-storage belt this
+// sim's default products are grounded in) — NOT pulled from a live weather
+// feed, and a single set of 4 numbers can't capture a whole subcontinent's
+// regional variation (coastal Gujarat, Deccan Maharashtra, and the Gangetic
+// plain have genuinely different seasonal profiles) — treat as the shape of
+// a representative North Indian cold-store's climate, not this-exact-year,
+// this-exact-city data. See the day-to-day weather variability above.
 const SEASONS = {
   summer:  { base:34, swing:7,  rhBase:0.68, rhSwing:0.10 },
   monsoon: { base:28, swing:3,  rhBase:0.88, rhSwing:0.06 },
@@ -1148,25 +1197,98 @@ const SEASONS = {
   winter:  { base:16, swing:5,  rhBase:0.35, rhSwing:0.08 },
 };
 
-// India ToU structure, as actually published by most state DISCOMs' commercial/
-// industrial time-of-day tariff orders: a solar-hours rebate across the ~8 midday
-// hours when grid solar generation is highest, a deeper off-peak discount overnight
-// when demand is lowest, and a peak surcharge across the evening demand spike —
-// with whatever's left over billed at the plain base rate.
-const BASE_TARIFF = 7.5; // Rs/kWh, a representative commercial/industrial LT/HT rate
-const TARIFF_BANDS = [
-  { key:"offpeak", name:"Off-Peak",  hours:"10pm-6am", mult:0.80, color:"#3b82f6", note:"up to 20% below base — low grid demand overnight" },
-  { key:"normal",  name:"Normal",    hours:"6am-9am, 5pm-6pm", mult:1.00, color:"#8ba0aa", note:"plain base rate" },
-  { key:"solar",   name:"Solar",     hours:"9am-5pm",  mult:0.85, color:"#f59e0b", note:"10-20% below base — cheap midday solar generation" },
-  { key:"peak",    name:"Peak",      hours:"6pm-10pm", mult:1.15, color:"#dc2626", note:"10-20% above base — evening demand spike" },
-];
+// §3 — real state-DISCOM ToU structures, not one illustrative national curve.
+// India's industrial/commercial time-of-day tariff orders differ meaningfully
+// by state — both the base rate and WHICH hours count as off-peak/solar/peak,
+// since that's driven by each state's own grid demand curve and solar
+// penetration. These are representative approximations of each DISCOM's
+// published HT/LT industrial ToU structure (rates/band hours are periodically
+// revised by each state regulator — treat as illustrative of the STRUCTURE
+// real facilities actually see, not as a current live billing rate).
+// Each band's `ranges` is the actual logic (list of [startHour, endHour)
+// half-open intervals, wrapping past midnight where needed) — `hours` is
+// just the matching display string. A band with no real rebate/surcharge in
+// that DISCOM's structure gets an empty ranges array (never matches) rather
+// than being dropped, so every region still has the same 4 keys for the UI/
+// ledger code that expects them.
+const TARIFF_REGIONS = {
+  national: {
+    label: "National representative (illustrative)",
+    baseTariff: 7.5,
+    bands: [
+      { key:"offpeak", name:"Off-Peak", hours:"10pm-6am", ranges:[[22,24],[0,6]], mult:0.80, color:"#3b82f6", note:"up to 20% below base — low grid demand overnight" },
+      { key:"normal",  name:"Normal",   hours:"6am-9am, 5pm-6pm", ranges:[[6,9],[17,18]], mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+      { key:"solar",   name:"Solar",    hours:"9am-5pm", ranges:[[9,17]], mult:0.85, color:"#f59e0b", note:"10-20% below base — cheap midday solar generation" },
+      { key:"peak",    name:"Peak",     hours:"6pm-10pm", ranges:[[18,22]], mult:1.15, color:"#dc2626", note:"10-20% above base — evening demand spike" },
+    ],
+  },
+  up: {
+    label: "Uttar Pradesh (UPPCL) — largest potato cold-storage base",
+    baseTariff: 7.10,
+    bands: [
+      { key:"offpeak", name:"Off-Peak", hours:"10pm-6am", ranges:[[22,24],[0,6]], mult:0.85, color:"#3b82f6", note:"UPPCL HT industrial night rebate" },
+      { key:"normal",  name:"Normal",   hours:"6am-6pm", ranges:[[6,18]], mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+      { key:"solar",   name:"Solar",    hours:"—", ranges:[], mult:1.00, color:"#f59e0b", note:"no distinct solar-hours rebate in UPPCL's structure — folded into Normal" },
+      { key:"peak",    name:"Peak",     hours:"6pm-10pm", ranges:[[18,22]], mult:1.20, color:"#dc2626", note:"evening peak surcharge" },
+    ],
+  },
+  punjab: {
+    label: "Punjab (PSPCL) — bulk potato/grain storage belt",
+    baseTariff: 6.80,
+    bands: [
+      { key:"offpeak", name:"Off-Peak", hours:"10pm-5am", ranges:[[22,24],[0,5]], mult:0.80, color:"#3b82f6", note:"PSPCL off-peak industrial incentive" },
+      { key:"normal",  name:"Normal",   hours:"5am-5pm", ranges:[[5,17]], mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+      { key:"solar",   name:"Solar",    hours:"—", ranges:[], mult:1.00, color:"#f59e0b", note:"no distinct solar-hours rebate in PSPCL's structure — folded into Normal" },
+      { key:"peak",    name:"Peak",     hours:"5pm-10pm", ranges:[[17,22]], mult:1.15, color:"#dc2626", note:"evening peak surcharge" },
+    ],
+  },
+  wb: {
+    label: "West Bengal (WBSEDCL) — potato cold-storage belt",
+    baseTariff: 7.90,
+    bands: [
+      { key:"offpeak", name:"Off-Peak", hours:"11pm-6am", ranges:[[23,24],[0,6]], mult:0.80, color:"#3b82f6", note:"WBSEDCL night rebate" },
+      { key:"normal",  name:"Normal",   hours:"6am-9am, 5pm-6pm", ranges:[[6,9],[17,18]], mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+      { key:"solar",   name:"Solar",    hours:"9am-5pm", ranges:[[9,17]], mult:0.90, color:"#f59e0b", note:"modest midday rebate" },
+      { key:"peak",    name:"Peak",     hours:"6pm-11pm", ranges:[[18,23]], mult:1.20, color:"#dc2626", note:"evening peak surcharge" },
+    ],
+  },
+  maharashtra: {
+    label: "Maharashtra (MSEDCL) — organized retail/pharma cold chain",
+    baseTariff: 9.80,
+    bands: [
+      { key:"offpeak", name:"Off-Peak", hours:"10pm-6am", ranges:[[22,24],[0,6]], mult:0.75, color:"#3b82f6", note:"MSEDCL TOD night rebate — among India's steepest" },
+      { key:"normal",  name:"Normal",   hours:"6am-9am, 5pm-6pm", ranges:[[6,9],[17,18]], mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+      { key:"solar",   name:"Solar",    hours:"9am-5pm", ranges:[[9,17]], mult:0.80, color:"#f59e0b", note:"explicit solar-hours TOD rebate" },
+      { key:"peak",    name:"Peak",     hours:"6pm-10pm", ranges:[[18,22]], mult:1.25, color:"#dc2626", note:"steep evening TOD surcharge" },
+    ],
+  },
+  gujarat: {
+    label: "Gujarat (GUVNL/Torrent) — food processing/pharma cold chain",
+    baseTariff: 7.20,
+    bands: [
+      { key:"offpeak", name:"Off-Peak", hours:"10pm-6am", ranges:[[22,24],[0,6]], mult:0.85, color:"#3b82f6", note:"GUVNL night rebate" },
+      { key:"normal",  name:"Normal",   hours:"6am-11am, 5pm-6pm", ranges:[[6,11],[17,18]], mult:1.00, color:"#8ba0aa", note:"plain base rate" },
+      { key:"solar",   name:"Solar",    hours:"11am-5pm", ranges:[[11,17]], mult:0.75, color:"#f59e0b", note:"Gujarat's high solar penetration gives an unusually deep midday rebate" },
+      { key:"peak",    name:"Peak",     hours:"6pm-10pm", ranges:[[18,22]], mult:1.20, color:"#dc2626", note:"evening peak surcharge" },
+    ],
+  },
+};
+function tariffRegionKey(){ return (typeof cfg!=="undefined" && cfg && cfg.tariffRegion) || "national"; }
+function currentTariffRegion(){ return TARIFF_REGIONS[tariffRegionKey()]; }
+function BASE_TARIFF(){ return currentTariffRegion().baseTariff; }
+function TARIFF_BANDS(){ return currentTariffRegion().bands; }
 function tariffPeriodAt(hour){
-  if(hour>=22 || hour<6) return TARIFF_BANDS[0];  // 10pm-6am
-  if(hour>=9 && hour<17) return TARIFF_BANDS[2];  // 9am-5pm
-  if(hour>=18 && hour<22) return TARIFF_BANDS[3]; // 6pm-10pm
-  return TARIFF_BANDS[1];                          // 6-9am, 5-6pm
+  const bands = TARIFF_BANDS();
+  for(const b of bands){
+    for(const [start,end] of b.ranges){
+      if(hour>=start && hour<end) return b;
+    }
+  }
+  // Shouldn't happen if a region's ranges are exhaustive over [0,24) — falls
+  // back to Normal (index 1) rather than crashing if one ever isn't.
+  return bands[1];
 }
-function tariffAt(hour){ return BASE_TARIFF*tariffPeriodAt(hour).mult; }
+function tariffAt(hour){ return BASE_TARIFF()*tariffPeriodAt(hour).mult; }
 
 const ZONES = ["A - Receiving","B - Bulk racks","C - Deep freeze"];
 const N_ZONES = ZONES.length;
@@ -1406,6 +1528,7 @@ function freshState(){
     truckQueue: 0,
     log: [],
     dayCount: 1,
+    dayWeatherFactor: 0, // §3 — 0=clear day, 1=overcast/rainy; see tick()'s day-rollover for the AR(1) update
     activeShiftLabel: null,
 
     // ---- dock appointment book — generated per day from the product's real
@@ -1617,8 +1740,14 @@ function ambientNow(){
   const hour = (state.tMin/60) % 24;
   const phase = ((hour-9)/24)*2*Math.PI;
   const diurnal = Math.sin(phase) + 0.25*Math.sin(2*phase - Math.PI/2); // asymmetric: sharper afternoon peak
-  const temp = s.base + s.swing*(diurnal - 0.25); // exact analytic recentering, see derivation above
-  const rh = Math.min(0.98, Math.max(0.15, s.rhBase + s.rhSwing*Math.sin(((hour-4)/24)*2*Math.PI)));
+  // §3 day-to-day weather variability: an overcast/rainy day (dayWeatherFactor
+  // toward 1) both damps the diurnal swing (clouds block daytime heating AND
+  // reduce nighttime radiative cooling) and shifts the whole day cooler/more
+  // humid — real day-to-day weather bumps this smooth seasonal curve alone
+  // used to skip entirely, per the design summary's own stated gap.
+  const wf = state.dayWeatherFactor||0;
+  const temp = (s.base - 3*wf) + s.swing*(1-0.5*wf)*(diurnal - 0.25); // exact analytic recentering, see derivation above
+  const rh = Math.min(0.98, Math.max(0.15, s.rhBase + 0.15*wf + s.rhSwing*Math.sin(((hour-4)/24)*2*Math.PI)));
   return {temp, rh, hour};
 }
 
@@ -1632,13 +1761,13 @@ function ambientNow(){
 // kind of bug that only shows up for the slower-turning products.
 function scheduleNextTruckAppt(afterTMin){
   const avgGapMin = cfg.product.deliveryIntervalHr*60;
-  let candidate = afterTMin + avgGapMin*(0.85+Math.random()*0.3);
+  let candidate = afterTMin + avgGapMin*(0.85+rng()*0.3);
   const day = Math.floor(candidate/1440);
   const hourOfDay = (candidate - day*1440)/60;
   if(hourOfDay < 7){
-    candidate = day*1440 + (7+Math.random()*2)*60;
+    candidate = day*1440 + (7+rng()*2)*60;
   } else if(hourOfDay >= 21){
-    candidate = (day+1)*1440 + (7+Math.random()*2)*60;
+    candidate = (day+1)*1440 + (7+rng()*2)*60;
   }
   state.nextTruckAppt = Math.round(candidate);
   logEvent(`Next ${cfg.product.name} delivery booked for ${fmtClock(state.nextTruckAppt)} (~${(avgGapMin/60).toFixed(0)}h cadence)`, false);
@@ -1650,8 +1779,8 @@ function checkTruckSchedule(dt){
     state.truckQueue++;
     state.cumulative.truckDeliveries++;
     logEvent(`Truck arrived at Zone A dock (booked appointment) — inbound pallets queued`, false);
-    const freshFractionPreview = Math.min(0.85, cfg.product.turnoverFraction + (Math.random()-0.5)*0.08);
-    openDoor(14 + Math.random()*10, "Inbound delivery", `${cfg.product.name}, ~${(freshFractionPreview*100).toFixed(0)}% of Zone A batch refreshed`); // 14-24 min unload+dock, real variance in crew speed
+    const freshFractionPreview = Math.min(0.85, cfg.product.turnoverFraction + (rng()-0.5)*0.08);
+    openDoor(14 + rng()*10, "Inbound delivery", `${cfg.product.name}, ~${(freshFractionPreview*100).toFixed(0)}% of Zone A batch refreshed`); // 14-24 min unload+dock, real variance in crew speed
 
     // --- stock turnover: fresh inbound product dilutes the batch already sitting in
     // receiving. The fraction that turns over is a property of the product (how it's
@@ -1733,7 +1862,7 @@ function maybeRotateStock(dt){
     const shelfCapMin = cfg.product.refLife*60*0.25;
     const cadenceMin = Math.max(240, Math.min(baseCadenceMin, shelfCapMin));
     if(state.tMin % cadenceMin < dt){
-      const freshFraction = Math.min(0.8, cfg.product.turnoverFraction*0.9 + (Math.random()-0.5)*0.06);
+      const freshFraction = Math.min(0.8, cfg.product.turnoverFraction*0.9 + (rng()-0.5)*0.06);
       state.spoilIndex[i] *= (1-freshFraction);
       state.batchAgeMin[i] *= (1-freshFraction);
       // Outbound/inbound turnover is a logistics schedule, not a controller
@@ -1745,7 +1874,7 @@ function maybeRotateStock(dt){
       }
       logEvent(`Outbound pick from ${ZONES[i]} — ${(freshFraction*100).toFixed(0)}% of batch staged for shipment`, false);
       pushEvent({ category:"logistics", name:"Outbound pick", zone:i, spec:`${(freshFraction*100).toFixed(0)}% of batch staged` });
-      forkliftGo(i, "outbound", 10 + Math.random()*8);
+      forkliftGo(i, "outbound", 10 + rng()*8);
     }
   });
 }
@@ -1777,9 +1906,9 @@ function dispatchMaintenance(i, kind){
   const day = Math.floor(state.tMin/1440);
   let scheduledAt;
   if(hour < 14){
-    scheduledAt = state.tMin + (60 + Math.random()*180); // 1-4h out, still fits today's route
+    scheduledAt = state.tMin + (60 + rng()*180); // 1-4h out, still fits today's route
   } else {
-    scheduledAt = (day+1)*1440 + (8+Math.random()*3)*60; // next business day, 8-11am
+    scheduledAt = (day+1)*1440 + (8+rng()*3)*60; // next business day, 8-11am
   }
   state.maintenanceVisit[i] = { scheduledAt, arrivedAt:null, endsAt:null, kind };
   logEvent(`Maintenance dispatched for ${ZONES[i]} (${kind==="service"?"refrigeration service":"sensor calibration check"}) — technician ETA ${fmtClock(scheduledAt)}`, false);
@@ -1793,7 +1922,7 @@ function stepMaintenance(i, dt){
   if(!v) return;
   if(!v.arrivedAt && state.tMin >= v.scheduledAt){
     v.arrivedAt = state.tMin;
-    v.endsAt = state.tMin + (45 + Math.random()*45); // 45-90 min onsite, a real service call length
+    v.endsAt = state.tMin + (45 + rng()*45); // 45-90 min onsite, a real service call length
     state.cumulative.technicianVisits++;
     logEvent(`Technician on site at ${ZONES[i]} — beginning ${v.kind==="service"?"compressor service":"sensor calibration"}`, false);
     pushEvent({ category:"maintenance", name:"Technician on site", zone:i, spec: v.kind==="service"?"refrigeration service":"sensor calibration", key:`maint:${i}` });
@@ -1837,7 +1966,7 @@ function stepDoor(dt){
       // real operations don't leave pallets sitting at the dock — a put-away
       // crew moves them into bulk racks within a couple of hours. Without this,
       // receiving would keep re-averaging in every delivery's warm mass forever.
-      if(!state.putAwayAt) state.putAwayAt = state.tMin + 60 + Math.random()*90;
+      if(!state.putAwayAt) state.putAwayAt = state.tMin + 60 + rng()*90;
     }
   }
 }
@@ -1862,7 +1991,7 @@ function stepPutAway(dt){
   logEvent(`Put-away crew clears staged pallets from Zone A to ${ZONES[dest]}`, false);
   pushEvent({ category:"logistics", name:"Put-away", zone:0, spec:`${(clearedFraction*100).toFixed(0)}% cleared to ${ZONES[dest]}` });
   state.putAwayAt = null;
-  forkliftGo(dest, "put-away", 8 + Math.random()*6);
+  forkliftGo(dest, "put-away", 8 + rng()*6);
 }
 
 /* ---------- forklift dispatch: driven by real operational events (put-away,
@@ -1900,7 +2029,7 @@ function stepForklift(dt){
         // an outbound job's stock has now reached the dock — the truck it's leaving on departs here
         if(f.jobLabel === "outbound"){
           state.cumulative.truckOutbound++;
-          openDoor(10 + Math.random()*8, "Outbound shipment", `from ${ZONES[f.fromZone]}`);
+          openDoor(10 + rng()*8, "Outbound shipment", `from ${ZONES[f.fromZone]}`);
           logEvent(`Outbound truck departs Zone A dock with the shipment`, false);
         }
         f.jobLabel = null;
@@ -2078,7 +2207,7 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW, wearNoise=n
   // months, not instantly. Occasionally a technician re-zeroes it (small chance
   // per day), same as a real preventive-maintenance calibration check.
   st.sensorDriftBias[i] += gaussianNoise(0.0015)*Math.sqrt(dt);
-  if(Math.random() < (0.0007*dt) && Math.abs(st.sensorDriftBias[i])>0.3){
+  if(rng() < (0.0007*dt) && Math.abs(st.sensorDriftBias[i])>0.3){
     st.sensorDriftBias[i] *= 0.15; // periodic recalibration pulls it back near zero
   }
 
@@ -2331,7 +2460,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
         const ratedKW = spec.compCapacityW/(ratedCOP(target)*1000);
         const inrushKWh = ratedKW*(5.8-1)*(2/3600);
         const period = tariffPeriodAt((state.tMin/60)%24);
-        const inrushCost = inrushKWh*BASE_TARIFF*period.mult;
+        const inrushCost = inrushKWh*BASE_TARIFF()*period.mult;
         if(isLive){
           state.energyKWhToday += inrushKWh; state.costToday += inrushCost;
           state.energyKWhTotal += inrushKWh; state.costTotal += inrushCost;
@@ -2386,7 +2515,7 @@ function tick(dtMin){
   const kwh = totalPowerKW*(dtMin/60);
   const currentHour = (state.tMin/60)%24;
   const period = tariffPeriodAt(currentHour);
-  const kwhCost = kwh*BASE_TARIFF*period.mult;
+  const kwhCost = kwh*BASE_TARIFF()*period.mult;
   state.energyKWhToday += kwh;
   state.costToday += kwhCost;
   state.energyKWhTotal += kwh;
@@ -2412,7 +2541,7 @@ function tick(dtMin){
     for(let i=0;i<N_ZONES;i++) stepCompressor(i, dtMin, sh, shMd);
     for(let i=0;i<N_ZONES;i++) stepZone(i, dtMin, sh, shMd, sh.powerKW, sharedWearNoise[i]);
     const shKwh = sh.powerKW.reduce((a,b)=>a+b,0)*(dtMin/60);
-    const shCost = shKwh*BASE_TARIFF*period.mult;
+    const shCost = shKwh*BASE_TARIFF()*period.mult;
     accumulateModeMetrics(sh, shMd, dtMin, shKwh, shCost, period);
     sh.tempHistory.push({ t: state.tMin, temp: Math.max(...sh.zoneTemp) });
     if(sh.tempHistory.length>360) sh.tempHistory.shift();
@@ -2440,7 +2569,7 @@ function tick(dtMin){
     const zKwh = lastZonePowerKW[i]*(dtMin/60) + pendingLiveInrushKWh[i];
     const bucket = state.energyLedger[ledgerDay][period.key][i];
     bucket.kwh += zKwh;
-    bucket.cost += zKwh*BASE_TARIFF*period.mult;
+    bucket.cost += zKwh*BASE_TARIFF()*period.mult;
     pendingLiveInrushKWh[i] = 0;
   }
 
@@ -2457,15 +2586,22 @@ function tick(dtMin){
     state.dayCount++;
     state.energyKWhToday=0; state.costToday=0; state.doorOpenTotalToday=0;
     state.forklift.tripsToday=0; state.forklift.metersToday=0;
+    // §3 day-to-day weather variability: an AR(1) random walk (mean-reverting,
+    // not independent noise each day) so cloudy/rainy spells persist for a
+    // few days the way real weather fronts do, rather than flickering
+    // day-to-day. 0 = clear day (full diurnal swing), 1 = heavily overcast/
+    // rainy (damped swing, cooler, more humid) — see ambientNow().
+    state.dayWeatherFactor = Math.min(1, Math.max(0, 0.7*state.dayWeatherFactor + 0.3*rng()));
+    if(state.dayWeatherFactor > 0.6) logEvent(`Overcast/rainy weather moving in — cooler, more humid, less diurnal swing today`, false);
     logEvent(`— Day ${state.dayCount} begins —`, false);
   }
 
   [0,1,2].forEach(i=>{
-    if(state.spoilIndex[i]>90 && Math.random()<0.02){
+    if(state.spoilIndex[i]>90 && rng()<0.02){
       logEvent(`⚠ ${ZONES[i]} spoilage index ${state.spoilIndex[i].toFixed(0)} — nearing discard threshold`, true);
       pushEvent({ category:"alert", name:"Spoilage risk high", zone:i, alert:true, spec:`index ${state.spoilIndex[i].toFixed(0)}/100` });
     }
-    if(state.zoneTemp[i] - cfg.product.target > cfg.product.band*2.2 && Math.random()<0.015){
+    if(state.zoneTemp[i] - cfg.product.target > cfg.product.band*2.2 && rng()<0.015){
       logEvent(`⚠ ${ZONES[i]} temp excursion: ${state.zoneTemp[i].toFixed(1)}°C`, true);
       pushEvent({ category:"alert", name:"Temperature excursion", zone:i, alert:true, spec:`${state.zoneTemp[i].toFixed(1)}°C vs ${cfg.product.target}°C target` });
     }
@@ -2498,7 +2634,7 @@ function currentPowerKW(){ return lastZonePowerKW.reduce((a,b)=>a+b,0); }
 
 // Gaussian noise via Box-Muller
 function gaussianNoise(sigma){
-  const u1=Math.random(), u2=Math.random();
+  const u1=rng(), u2=rng();
   return sigma * Math.sqrt(-2*Math.log(u1||1e-9)) * Math.cos(2*Math.PI*u2);
 }
 
@@ -2507,7 +2643,7 @@ function gaussianNoise(sigma){
 // accumulated on the real thermistor (see sensorDriftBias in stepZone).
 function stepTelemetry(i, dt){
   const dropoutChance = 0.015; // ~1 missed reading per ~70 sim-minutes, occasional comms flakiness
-  if(Math.random() < dropoutChance){
+  if(rng() < dropoutChance){
     state.telemetryStale[i] += dt;
     return; // hold last reported value — a real dropped MQTT message looks exactly like this
   }
@@ -2670,7 +2806,7 @@ function runAdvisories(){
     const curPeriod = tariffPeriodAt(hourNow);
     const aheadPeriod = tariffPeriodAt((hourNow+2)%24);
     if(curPeriod.key!=="peak" && aheadPeriod.key==="peak" && state.zoneTemp[i]-target < -0.2*cfg.product.band){
-      advisories.push({zone:i, level:"ok", text:`${ZONES[i]}: currently below setpoint during ${curPeriod.name} tariff (₹${(BASE_TARIFF*curPeriod.mult).toFixed(2)}/kWh) with Peak tariff starting within ~2h — good time to let thermal mass coast through the coming peak window instead of cycling then.`});
+      advisories.push({zone:i, level:"ok", text:`${ZONES[i]}: currently below setpoint during ${curPeriod.name} tariff (₹${(BASE_TARIFF()*curPeriod.mult).toFixed(2)}/kWh) with Peak tariff starting within ~2h — good time to let thermal mass coast through the coming peak window instead of cycling then.`});
     }
   }
   state.advisories = advisories.slice(0,6);
@@ -3187,10 +3323,10 @@ function renderStats(){
   document.getElementById("stDayPhase").textContent = `${dayPhaseLabel(hour)} · Day ${state.dayCount}`;
   document.getElementById("stAmbient").textContent = `${temp.toFixed(1)}°C`;
   const period = tariffPeriodAt(hour);
-  const tariff = BASE_TARIFF*period.mult;
+  const tariff = BASE_TARIFF()*period.mult;
   const tEl = document.getElementById("stTariff");
   tEl.textContent = `₹${tariff.toFixed(2)}/kWh`;
-  tEl.className = "v tnum " + (tariff>BASE_TARIFF*1.05?"bad":tariff>=BASE_TARIFF*0.95?"warn":"good");
+  tEl.className = "v tnum " + (tariff>BASE_TARIFF()*1.05?"bad":tariff>=BASE_TARIFF()*0.95?"warn":"good");
   document.getElementById("stTariffDot").style.background = period.color;
   document.getElementById("stTariffPeriodName").textContent = `${period.name} · ${period.hours}`;
   document.getElementById("stEnergy").textContent = `${state.energyKWhToday.toFixed(1)} kWh · ₹${state.costToday.toFixed(0)}`;
@@ -3382,8 +3518,8 @@ function renderTwin(){
 // stylesheet having loaded/cached correctly either.
 function tariffCardHTML(){
   const rowStyle = "display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.15);";
-  const rows = TARIFF_BANDS.map(b=>{
-    const rate = (BASE_TARIFF*b.mult).toFixed(2);
+  const rows = TARIFF_BANDS().map(b=>{
+    const rate = (BASE_TARIFF()*b.mult).toFixed(2);
     const pct = b.mult===1 ? "base" : `${b.mult>1?"+":""}${((b.mult-1)*100).toFixed(0)}%`;
     return `<div style="${rowStyle}">`
       + `<span style="min-width:56px">${b.name}</span>`
@@ -3393,7 +3529,7 @@ function tariffCardHTML(){
       + `</div>`;
   }).join("");
   const headStyle = "display:flex;justify-content:space-between;gap:10px;padding-bottom:3px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.03em;opacity:0.6;border-bottom:1px solid rgba(255,255,255,0.25);";
-  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF.toFixed(2)}/kWh`
+  return `<b>India ToU rate card</b>Base rate ₹${BASE_TARIFF().toFixed(2)}/kWh`
     + `<div style="margin:6px 0;font-size:11px;">`
     + `<div style="${headStyle}"><span style="min-width:56px">Period</span><span style="flex:1">Hours</span><span>Rate</span><span style="min-width:38px;text-align:right">vs base</span></div>`
     + rows
@@ -3433,10 +3569,13 @@ const TIPS = {
   "ctrl:mode-vfd": "<b>Variable-speed (VFD)</b>A dimmer, not a switch: capacity smoothly ramps 0-100% instead of clicking on/off. This is standard in modern integrated pack-houses, pharma cold-chain, and newer organized-retail distribution centers in India — but it's still a minority of total Indian cold storage capacity, which remains dominated by simple on/off potato-storage-style plants.",
   "ctrl:product": "<b>Product profile</b>Sets target temp, hysteresis band, specific heat (cp, from Siebel's equation off the item's real water content), cooling time-constant (τ), Arrhenius Q10 for spoilage, and delivery/turnover logistics. Several Indian items are chilling-sensitive (tomato, banana, mango) and are deliberately targeted well above 0°C — storing them colder would injure them, not protect them.",
   "ctrl:season":  "<b>Ambient profile</b>India's 4 practical seasons — Summer, Monsoon, Post-monsoon, Winter — each with its own base temp, day/night swing, and humidity baseline feeding every zone's wall-conduction load and the compressor's dehumidification duty.",
+  "ctrl:tariffRegion": "<b>Tariff region</b>§3 — real state-DISCOM industrial ToU structures differ meaningfully from each other, not just from one illustrative national curve: the base rate AND which hours count as off-peak/solar/peak both vary by state, driven by each grid's own demand curve and solar penetration. These are representative approximations of each DISCOM's published structure (rates/bands are periodically revised — treat as illustrative of the shape real facilities see, not a live billing rate). Switching mid-run only affects energy used from that point on — past bill history keeps the rates it was actually recorded under, same as a real tariff revision would.",
   "ctrl:speed":   "<b>Sim speed</b>How many simulated minutes advance per animation frame (1–8).",
   "ctrl:play":    "Pause or resume the simulation clock.",
   "ctrl:truck":   "Force an unscheduled truck arrival now, on top of the normal booked dock schedule — same door/unload/turnover effects as a booked delivery.",
-  "ctrl:reset":   "Reset every zone to ambient and clear all history, logs, and frost/spoilage state.",
+  "ctrl:reset":   "Reset every zone to ambient and clear all history, logs, and frost/spoilage state. Also draws a fresh, unpredictable seed — for a reproducible reset, use the Seed field and 'Replay this seed' instead.",
+  "ctrl:seed":    "<b>Seed</b>Every random element in this sim (truck timing, sensor noise, equipment-wear drift) is drawn from this one number. Two runs with the same seed play out identically — same truck arrivals, same noise, same wear — which is what actually lets you compare 'did this control change help' instead of 'did this session just get lucky.' Shown after every reset so you can copy it down before trying something.",
+  "ctrl:replay":  "Re-runs the simulation from scratch using whatever number is in the Seed field, instead of drawing a new random one — reproduces a specific run exactly, useful for confirming a change actually caused a difference rather than random variance.",
   "th:air":       "<b>Air</b>Circulating chamber air temperature — the fast-moving node the compressor cools directly and the thermostat controls on. Ground truth, not what's displayed on a sensor.",
   "th:temp":      "<b>Product core</b>The actual temperature INSIDE the stored food — changes slowly. This is what spoilage cares about, not the air temperature. See Glossary: τ.",
   "th:sensor":    "<b>Sensor (lag)</b>What a real wall sensor would show — close to the air temp, but always a little behind and a little noisy.",
@@ -3477,7 +3616,10 @@ const TIPS = {
   const tipEl = document.getElementById("tooltip");
   let current = null;
   function show(target, key){
-    const html = TIPS[key];
+    // "head:tariff" must be recomputed on every hover, not cached at page
+    // load — the rate card now depends on the selected tariff region, which
+    // can change mid-session (see TARIFF_REGIONS/tariffRegionSel).
+    const html = key==="head:tariff" ? tariffCardHTML() : TIPS[key];
     if(!html) return;
     tipEl.innerHTML = html;
     tipEl.classList.toggle("wide", html.includes("ToU rate card"));
@@ -3682,11 +3824,11 @@ function renderCompare(){
   const tbody = document.getElementById("compareTbody");
   const rows = SHADOW_KEYS.map(modeKey=>{
     const m = shadowStates[modeKey].modeMetrics[modeKey];
-    const totalKwh = TARIFF_BANDS.reduce((s,b)=>s+m.costByPeriod[b.key].kwh, 0);
-    const totalCost = TARIFF_BANDS.reduce((s,b)=>s+m.costByPeriod[b.key].cost, 0);
+    const totalKwh = TARIFF_BANDS().reduce((s,b)=>s+m.costByPeriod[b.key].kwh, 0);
+    const totalCost = TARIFF_BANDS().reduce((s,b)=>s+m.costByPeriod[b.key].cost, 0);
     const pctInBand = m.minutesTracked>0 ? (m.minutesInBand/m.minutesTracked*100).toFixed(1) : "0.0";
     const avgRate = totalKwh>0 ? (totalCost/totalKwh).toFixed(2) : "—";
-    const periodBreak = TARIFF_BANDS.map(b=>`${b.name}: ₹${m.costByPeriod[b.key].cost.toFixed(0)}`).join(" · ");
+    const periodBreak = TARIFF_BANDS().map(b=>`${b.name}: ₹${m.costByPeriod[b.key].cost.toFixed(0)}`).join(" · ");
     const spoilDelta = (m.spoilLast!==null && m.spoilStart!==null) ? (m.spoilLast-m.spoilStart) : 0;
     const cyclesPerHr = m.minutesTracked>0 ? (m.cyclesStarted/(m.minutesTracked/60)).toFixed(2) : "0.00";
     const isLive = modeKey===cfg.mode;
@@ -3752,7 +3894,7 @@ function populateBillFilters(){
   }
   const periodList = document.getElementById("billPeriodList");
   if(periodList.children.length===0){
-    periodList.innerHTML = TARIFF_BANDS.map(b=>`<label><input type="checkbox" value="${b.key}" checked> ${b.name} <span style="color:var(--ink-dim);font-size:11px">(${b.hours})</span></label>`).join("");
+    periodList.innerHTML = TARIFF_BANDS().map(b=>`<label><input type="checkbox" value="${b.key}" checked> ${b.name} <span style="color:var(--ink-dim);font-size:11px">(${b.hours})</span></label>`).join("");
   }
   const zoneList = document.getElementById("billZoneList");
   if(zoneList.children.length===0){
@@ -3771,7 +3913,7 @@ function renderBillBreakdown(){
   const zones = getCheckedValues("billZoneList");
 
   let totalKwh=0, totalCost=0;
-  const byPeriod = {}; TARIFF_BANDS.forEach(b=>byPeriod[b.key]={kwh:0,cost:0});
+  const byPeriod = {}; TARIFF_BANDS().forEach(b=>byPeriod[b.key]={kwh:0,cost:0});
   const byZone = [{kwh:0,cost:0},{kwh:0,cost:0},{kwh:0,cost:0}];
 
   for(const dayStr of Object.keys(state.energyLedger)){
@@ -3792,8 +3934,8 @@ function renderBillBreakdown(){
   document.getElementById("billSumCost").textContent = `₹${totalCost.toFixed(0)}`;
   document.getElementById("billSumRate").textContent = totalKwh>0 ? `₹${(totalCost/totalKwh).toFixed(2)}/kWh` : "—";
 
-  const maxPeriodKwh = Math.max(1, ...TARIFF_BANDS.map(b=>byPeriod[b.key].kwh));
-  document.getElementById("billByPeriod").innerHTML = TARIFF_BANDS.map(b=>{
+  const maxPeriodKwh = Math.max(1, ...TARIFF_BANDS().map(b=>byPeriod[b.key].kwh));
+  document.getElementById("billByPeriod").innerHTML = TARIFF_BANDS().map(b=>{
     const d = byPeriod[b.key];
     return `<tr><td class="blabel">${b.name}<div class="billBarWrap"><div class="billBar" style="width:${(d.kwh/maxPeriodKwh*100).toFixed(0)}%;background:${b.color}"></div></div></td><td>${d.kwh.toFixed(1)}</td><td>₹${d.cost.toFixed(0)}</td></tr>`;
   }).join("");
@@ -3837,13 +3979,21 @@ function renderBillBreakdown(){
    LOOP + WIRING
    ============================================================ */
 
-function setup(){
+// seed: pass a specific number to replay that exact run (same truck timing,
+// same sensor noise, same wear random-walk draws — everything downstream of
+// rng()); omit to start a fresh, unpredictable one, same as before seeding
+// existed. See the "Seed" field in the Controls card.
+function setup(seed){
+  reseed(seed!==undefined ? seed : ((Date.now() ^ (Math.random()*0xFFFFFFFF)) >>> 0));
   state = freshState();
-  cfg = { product: PRODUCTS.produce, season: "summer", mode: "rule" };
+  cfg = { product: PRODUCTS.produce, season: "summer", mode: "rule", tariffRegion: "national" };
   resetShadowStates();
   logEvent("Simulation initialized — chambers at ambient, compressor idle", false);
   logEvent("Twin estimator online — calibrating capacity/UA against synthetic telemetry", false);
   logEvent("Parallel benchmark shadows online — Two-position/Adaptive/VFD now running side by side", false);
+  logEvent(`Seed ${currentSeed} — reuse it (Controls → Seed) to replay this exact run`, false);
+  const seedInput = document.getElementById("seedInput");
+  if(seedInput) seedInput.value = currentSeed;
 }
 
 // ---- Public data/control surface for an external AI system to build against.
@@ -3904,6 +4054,11 @@ window.ColdStorageTwin = {
     out.ai = null;
     return out;
   },
+  // §2 — reproducibility: getSeed() reports the seed the current run started
+  // from; setup(seed) (not exposed directly, use resetWithSeed) restarts the
+  // whole sim from that exact seed so a specific scenario can be replayed.
+  getSeed(){ return currentSeed; },
+  resetWithSeed(seed){ setup(seed); },
 };
 
 function frame(){
@@ -3946,6 +4101,13 @@ document.getElementById("seasonSel").addEventListener("change", e=>{
   pushEvent({ category:"config", name:"Ambient profile changed", spec: e.target.selectedOptions[0].textContent });
 });
 
+document.getElementById("tariffRegionSel").addEventListener("change", e=>{
+  cfg.tariffRegion = e.target.value;
+  const r = currentTariffRegion();
+  logEvent(`Tariff region switched to ${r.label} — base ₹${r.baseTariff.toFixed(2)}/kWh. Past bill history keeps the rates it was actually recorded under.`, false);
+  pushEvent({ category:"config", name:"Tariff region changed", spec: r.label });
+});
+
 document.getElementById("speedRange").addEventListener("input", e=>{ speed = +e.target.value; });
 
 document.getElementById("playBtn").addEventListener("click", e=>{
@@ -3960,7 +4122,12 @@ document.getElementById("truckBtn").addEventListener("click", ()=>{
 });
 
 document.getElementById("resetBtn").addEventListener("click", ()=>{
-  setup();
+  setup(); // fresh, unpredictable seed — same as before seeding existed
+});
+
+document.getElementById("replaySeedBtn").addEventListener("click", ()=>{
+  const val = parseInt(document.getElementById("seedInput").value, 10);
+  setup(isNaN(val) ? undefined : val); // replay the exact seed typed into the box
 });
 
 setup();
