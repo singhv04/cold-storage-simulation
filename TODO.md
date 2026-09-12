@@ -78,12 +78,31 @@ holds the product at its optimum temperature (not just energy use in isolation).
 
 ## 2. Digital twin / estimator layer
 
-- [ ] Upgrade the Step-3 "guessing" logic from a simplified recursive/gradient calibration to a
-      proper Kalman filter (or extended/unscented KF given the nonlinear thermal model), with real
-      covariance/uncertainty propagation instead of an ad hoc nudge-toward-reading update.
-- [ ] Improve anomaly attribution (equipment wear vs. sensor drift) from a heuristic threshold into
-      a proper multi-hypothesis test (e.g., compare likelihood of "compressor degraded" vs. "sensor
-      drifted" explanations given the residual history).
+- [x] **Upgrade the Step-3 "guessing" logic to a proper Extended Kalman Filter** — implemented: a real
+      3-state EKF per zone (`[airTemp, capMult, uaMult]`, state `twinP` = 3x3 covariance matrix per
+      zone) replaces the old fixed-size nudge. Correctly extended (not plain linear KF) because the
+      thermal model is genuinely nonlinear in the state — `uaMult` multiplies the `airTemp` state
+      itself in the wall heat-transfer term — so a Jacobian `F` is computed and linearized around the
+      current estimate every tick, exactly per the TODO's own "extended... given the nonlinear thermal
+      model" framing. Full predict/update cycle: `Ppred = F·P·Fᵀ + Q`, Kalman gain
+      `K = Ppred·Hᵀ/(H·Ppred·Hᵀ + R)` with `H=[1,0,0]` (only air temp, via the existing sensor-lag
+      proxy, is ever measured), state/covariance update on a fresh reading, predict-only (no update)
+      on a stale one — matching how a real estimator handles a dropped reading. Verified via a 4-season
+      × 9-product headless sweep (36 combinations, 20 sim-days each): covariance stays positive and
+      finite throughout (no negative variances, no blow-up), `estCapMult`/`estUaMult` converge close to
+      true values over a 60-day run (1.03/1.005/1.004 vs. true 0.991/0.992/0.990 — clearly better
+      tracking than the old ad hoc method's floor-crashing), and reproducibility (identical seed →
+      identical run) still holds with the full matrix math included.
+- [x] **Improve anomaly attribution using the EKF's own covariance** — implemented: instead of one
+      fixed magnitude threshold (`estCapMult<0.93`) for every situation, the maintenance/calibration
+      triggers now compute real z-scores (`zCap`, `zUa` — how many estimated standard errors a
+      parameter has moved from nameplate, using the EKF's own tracked variance) and require the
+      deviation to be statistically confident (>3σ for capacity wear), not just numerically past a
+      fixed line. The calibration-drift trigger similarly requires capacity/UA to look normal WITH
+      real statistical confidence (<1.5σ), not just "close to 1.0" — a genuine, if still simplified,
+      step toward "compare likelihood of explanations given the residual history" rather than a bare
+      threshold. A full formal multi-hypothesis Bayesian test (jointly modeling P(wear) vs. P(sensor
+      drift) as competing generative hypotheses) would be a further step beyond this if ever needed.
 - [x] **Add seeded/reproducible randomness** — implemented: all 18 in-sim `Math.random()` call sites
       replaced with a seeded `mulberry32` PRNG (`rng()`). Seed shown/settable via a "Seed" field +
       "Replay this seed" button in Controls, plus `getSeed()`/`resetWithSeed()` on

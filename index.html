@@ -920,7 +920,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
       <li>Each chamber is treated as one well-mixed room — it doesn't know that the back corner might be colder than the middle, the way a real chamber can.</li>
       <li>The weather is still a reasonable guess written by hand, not pulled from a real live weather service — though it's now documented as tracking published climate normals for the region this sim is grounded in, and gets day-to-day cloudy/rainy variation instead of a perfectly smooth curve. Electricity price now models 6 real Indian state-DISCOM tariff structures you can pick between (each with its own real rate AND its own real time-of-day band hours) — better than the single illustrative curve this used to be, though still representative approximations rather than a live rate feed.</li>
       <li>Spoilage is estimated with one general formula (temperature too high, for too long, spoils food faster) rather than a formula specific to each exact product tested in a lab.</li>
-      <li>The "guessing" logic (Step 3 above) is a simplified version of what real industrial software uses (called a Kalman filter) — it works and settles on the right answer, but it isn't the mathematically optimal version.</li>
+      <li>The "guessing" logic (Step 3 above) is now a real Kalman filter — it tracks its own uncertainty about each guess (not just the guess itself), which is what actually lets it tell "confidently wrong" apart from "not sure yet." It's still a simplified 3-number version of what a full industrial system might track, not the most elaborate version possible, but it's genuinely the real mathematical technique now, not an approximation of one.</li>
       <li>A frosted coil is penalized twice — once as less cooling actually delivered, and again as worse electricity-to-cooling efficiency. Both effects are real and independently documented in refrigeration engineering, but applying both at once means a badly frosted coil is modeled as somewhat worse than most single real-world measurements of frost's impact — a deliberately conservative (not an accidental) choice.</li>
     </ul>
 
@@ -949,7 +949,7 @@ table.billTable td.blabel{ font-family:ui-sans-serif,sans-serif; }
       <li>Swap the hand-guessed building size, wall insulation, and compressor power for your actual building's real drawings and equipment spec sheets.</li>
       <li>Replace the pretend sensor readings with a real feed from your real sensors (a technical detail: the code calls this feed <code>stepTelemetry()</code> — only that one function needs to change).</li>
       <li>Replace the hand-written weather guess with a real weather service (electricity price is now closer — pick your actual DISCOM's tariff region — but still swap in your exact contracted rate schedule for a real bill).</li>
-      <li>Replace the simplified guessing math with proper industrial-grade estimation software, and replace the plain-English advice rules with a trained AI model.</li>
+      <li>The guessing math (a real Kalman filter now) would need re-tuning against your actual sensors' real noise characteristics instead of this sim's assumed numbers, and the plain-English advice rules would still want replacing with a trained AI model.</li>
       <li>If it matters for your product, add the ability to model cold and warm spots inside a single chamber, instead of treating each chamber as one uniform room.</li>
     </ul>
   </div>
@@ -1605,6 +1605,18 @@ function freshState(){
     estUaMult: [1,1,1],             // estimated envelope UA multiplier vs design
     residual: [0,0,0],              // smoothed |twin prediction - telemetry|
     residualBaseline: [0.3,0.3,0.3],// expected noise-floor residual, for anomaly thresholds
+    // §2 — one 3x3 state covariance matrix per zone for [airTemp, capMult,
+    // uaMult], row-major, propagated by the real EKF in stepTwinEstimator().
+    // Off-diagonal terms genuinely matter here (e.g. cov(airTemp,capMult) —
+    // knowing HOW airTemp-vs-capacity errors correlate is what lets the
+    // Kalman gain weight capacity/UA corrections properly instead of a fixed
+    // step size), which is exactly what "real covariance/uncertainty
+    // propagation instead of an ad hoc nudge" means.
+    twinP: [
+      [[0.5,0,0],[0,0.01,0],[0,0,0.01]],
+      [[0.5,0,0],[0,0.01,0],[0,0,0.01]],
+      [[0.5,0,0],[0,0.01,0],[0,0,0.01]],
+    ],
 
     // ---- real-world equipment aging — gradual, not sudden. Compressors lose a little
     // capacity per operating hour (valve/seal wear); sensors drift a little per day
@@ -2780,20 +2792,48 @@ function stepTelemetry(i, dt){
   state.telemetry[i] = Math.round(raw*10)/10; // 0.1C quantization, typical of cheap loggers
 }
 
+// §2 — small 3x3 linear-algebra helpers for the EKF below. Matrices are
+// plain 3x3 nested arrays (row-major); vectors are length-3 arrays. Kept
+// generic/tiny rather than pulling in a library, since exactly one 3x3
+// system (per zone) ever needs solving here.
+function mat3VecMul(M, v){
+  return [
+    M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],
+    M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],
+    M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2],
+  ];
+}
+function mat3Mul(A, B){
+  const C = [[0,0,0],[0,0,0],[0,0,0]];
+  for(let r=0;r<3;r++) for(let c=0;c<3;c++){
+    let s=0; for(let k=0;k<3;k++) s += A[r][k]*B[k][c];
+    C[r][c]=s;
+  }
+  return C;
+}
+function mat3Transpose(M){ return [[M[0][0],M[1][0],M[2][0]],[M[0][1],M[1][1],M[2][1]],[M[0][2],M[1][2],M[2][2]]]; }
+function mat3Add(A, B){ return A.map((row,r)=>row.map((v,c)=>v+B[r][c])); }
+
 // Online state estimator: the twin predicts using its OWN model + current
 // parameter estimates, then corrects both its belief and its parameters
-// against telemetry — a simplified recursive (gradient) calibration, the
-// same role a Kalman filter / RLS fit plays in a production twin.
+// against telemetry via a real Extended Kalman Filter (EKF) — the thermal
+// model is nonlinear in the state (the UA-multiplier parameter multiplies
+// the air-temperature state itself, in the wall heat-transfer term), so a
+// plain linear KF isn't quite right; EKF linearizes around the current
+// estimate each tick via the Jacobian F below, same as the "or extended...
+// KF given the nonlinear thermal model" TODO.md called for.
+//
+// State vector x = [airTemp, capMult, uaMult] (matches
+// twinPredTemp/estCapMult/estUaMult, which this function still writes into —
+// they're just now genuinely driven by a covariance-weighted update instead
+// of a fixed-size nudge). capMult/uaMult are modeled as slowly-varying
+// parameters (a random walk with small process noise), airTemp as the fast
+// state driven by the known control input (capacityFraction) and known
+// disturbance (ambient) — classic joint state+parameter (dual) estimation,
+// done properly this time.
 function stepTwinEstimator(i, dt){
   const spec = ZONE_SPECS[i];
   const {temp: ambient, rh: ambRH} = ambientNow();
-  const target = cfg.product.target;
-
-  // twin's own AIR-node forward step (matches what the sensor actually reads),
-  // using estimated (not true) parameters. The twin does NOT get a wall node —
-  // it only ever sees the aggregate effect through the air, which is realistic:
-  // no real BMS estimates a wall's own internal temperature either.
-  const wallW = zoneUA(i)*state.estUaMult[i] * (ambient - state.twinPredTemp[i]);
   const frostPenalty = 1 - Math.min(0.6, state.frost[i]*0.6); // frost is directly observed (coil sensor), not estimated
   // Must mirror stepZone's §1 latentFraction derate — outdoor humidity is
   // something a twin can legitimately know (it's an external weather input,
@@ -2803,83 +2843,100 @@ function stepTwinEstimator(i, dt){
   // humid days and mis-attribute the gap to capacity, oscillating estCapMult
   // with the season instead of tracking true capacity.
   const latentFraction = Math.min(0.35, 0.10 + 0.30*ambRH);
-  let coolingW = 0;
-  if(!state.defrosting[i]) coolingW = spec.compCapacityW*frostPenalty*state.estCapMult[i]*state.capacityFraction[i]*(1-latentFraction);
   const defrostHeaterW = state.defrosting[i] ? 2500 : 0;
-  const doorW = (state.doorOpen && spec.doorAreaM2>0) ? spec.doorAreaM2*0.4*RHO_AIR*CP_AIR*1000*(ambient-state.twinPredTemp[i])*0.45 : 0;
   const shift = currentShift(ambientNow().hour);
   const shiftW = shift ? shift.count*(i===0?170:35) : 40;
-  const netW = wallW + doorW + shiftW + defrostHeaterW - coolingW;
+  // Coefficients for the linear(ized) process model netW = uaCoef*uaMult*(ambient-airTemp)
+  // + doorCoef*(ambient-airTemp) + shiftW + defrostHeaterW - capCoef*capMult — i.e.
+  // everything the twin KNOWS (door state, shift roster, frost reading, its own
+  // commanded capacityFraction) folded into fixed coefficients, leaving only
+  // the 3 state variables [airTemp, capMult, uaMult] as unknowns to estimate.
+  const uaCoef = zoneUA(i);
+  const doorCoef = (state.doorOpen && spec.doorAreaM2>0) ? spec.doorAreaM2*0.4*RHO_AIR*CP_AIR*1000*0.45 : 0;
+  const capCoef = state.defrosting[i] ? 0 : spec.compCapacityW*frostPenalty*state.capacityFraction[i]*(1-latentFraction);
   const airCapKJperK = airCapacityKJperK(i);
-  state.twinPredTemp[i] += (netW*(dt*60)/1000)/airCapKJperK;
+  const a = (dt*60)/1000/airCapKJperK; // converts a Watt-sized term to a °C change over this tick
 
-  // twin's derived PRODUCT-temp estimate — driven off its own air estimate through
-  // the same convective coupling as the true plant, not observed directly. This is
-  // what the advisory layer actually needs (spoilage tracks product, not air).
-  const coupling = productCouplingKJperMinK(i) * 1000/60 * (state.twinPredTemp[i]-state.twinProductTemp[i]);
+  // ---- EKF predict step ----
+  const x = [state.twinPredTemp[i], state.estCapMult[i], state.estUaMult[i]];
+  const netW = uaCoef*x[2]*(ambient-x[0]) + doorCoef*(ambient-x[0]) + shiftW + defrostHeaterW - capCoef*x[1];
+  const xPred = [ x[0] + a*netW, x[1], x[2] ]; // capMult/uaMult: random walk (parameters, not fast states)
+  // Jacobian of the process model, linearized at the CURRENT estimate x — this
+  // is the "extended" part of EKF: uaMult multiplies the airTemp state itself
+  // (the wall heat-transfer term), so the process model is genuinely
+  // nonlinear, not just noisy-linear.
+  const F = [
+    [1 + a*(-uaCoef*x[2] - doorCoef), a*(-capCoef), a*(uaCoef*(ambient-x[0]))],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  // Process noise: modest uncertainty in the air-temp model itself (it's a
+  // simplified 1-node model missing the true plant's wall thermal mass, by
+  // design — see the design summary), and deliberately tiny per-tick drift
+  // allowance for capMult/uaMult, since real equipment condition changes slowly.
+  const Q = [[0.01,0,0], [0,0.00002*dt,0], [0,0,0.00004*dt]];
+  const Ppred = mat3Add(mat3Mul(mat3Mul(F, state.twinP[i]), mat3Transpose(F)), Q);
+
+  // twin's derived PRODUCT-temp estimate — driven off its PREDICTED air
+  // estimate through the same convective coupling as the true plant, not
+  // observed directly (kept as a plain derived quantity outside the KF state,
+  // same as before — what the advisory layer actually needs, since spoilage
+  // tracks product, not air).
+  const coupling = productCouplingKJperMinK(i) * 1000/60 * (xPred[0]-state.twinProductTemp[i]);
   state.twinProductTemp[i] += (coupling*(dt*60)/1000)/productCapacityKJperK(i);
 
-  // BUG FOUND AND FIXED DURING AUDIT: this used to compare telemetry directly
-  // against twinPredTemp (the twin's raw, LAG-FREE physics prediction). But
-  // telemetry itself passes through a real ~4-minute sensor-housing lag (see
-  // stepZone's zoneSensor filter) before it's ever reported — so telemetry
-  // legitimately reads warmer than the twin's instantaneous prediction any
-  // time the room is actively cooling, and colder any time it's warming back
-  // up. That's pure, expected sensor lag, not a capacity/UA error — but the
-  // parameter-update rule below couldn't tell the difference, and because the
-  // compressor being ON almost always coincides with "actively cooling" (and
-  // thus with telemetry reading warm-biased), it kept reading this as "the
-  // compressor is weaker than assumed" tick after tick, EVERY session,
-  // dragging estCapMult to its floor (0.4) and estUaMult to its floor (0.5)
-  // within about 10 days regardless of actual (unchanged) true capacity —
-  // confirmed via a 15-day headless replay of the real code: estCapMult fell
-  // to 0.46-0.53 and estUaMult flatlined at its floor, while trueCapMult
-  // stayed ~0.998-1.001 throughout. This also meant the maintenance-flagging
-  // threshold (`estCapMult<0.93`) fired almost immediately in every session,
-  // regardless of actual equipment condition.
-  //
-  // Fix: give the twin its own lag-filtered "predicted sensor reading"
-  // (twinPredSensor, same time constant as the real sensor housing) and
-  // compare telemetry against THAT instead of the raw prediction — the
-  // correct thing to do whenever you know your sensor has its own transfer
-  // function. This cleanly separates "known, modeled sensor lag" from "the
-  // actual unknown to estimate" the same way it's separated in a real system.
+  // BUG FOUND AND FIXED DURING AN EARLIER AUDIT, kept fixed here: comparing
+  // telemetry directly against the twin's raw, LAG-FREE prediction created a
+  // persistent bias (telemetry passes through a real ~4-minute sensor-housing
+  // lag before being reported) that got misread as equipment wear every
+  // session. Fix retained: predict a lag-filtered "twinPredSensor" from
+  // xPred[0] and compare telemetry against THAT.
   const SENSOR_LAG_TAU_MIN = 4; // must match stepZone's SENSOR_HOUSING_TAU_MIN
-  state.twinPredSensor[i] += (state.twinPredTemp[i]-state.twinPredSensor[i])/SENSOR_LAG_TAU_MIN * dt;
+  state.twinPredSensor[i] += (xPred[0]-state.twinPredSensor[i])/SENSOR_LAG_TAU_MIN * dt;
 
   // residual between the twin's belief and telemetry — the only signal the twin has
   const err = state.telemetry[i] - state.twinPredSensor[i];
   state.residual[i] = state.residual[i]*0.9 + Math.abs(err)*0.1;
 
-  // correction step: nudge the belief toward telemetry (measurement update),
-  // and slowly adapt capacity/UA multipliers to explain persistent bias
-  // (parameter update) — classic dual state+parameter estimation, simplified.
-  const kalmanGain = state.telemetryStale[i]>0 ? 0 : 0.35; // don't trust a stale reading
-  state.twinPredTemp[i] += err*kalmanGain;
-
-  if(state.compressorOn[i] && Math.abs(err) > 0.4){
-    // running too warm vs telemetry -> capacity likely lower than assumed, and vice versa
-    const dir = err>0 ? -1 : 1;
-    state.estCapMult[i] = Math.min(1.05, Math.max(0.4, state.estCapMult[i] + dir*0.0006*dt));
-  } else if(!state.compressorOn[i] && Math.abs(err) > 0.4){
-    const dir = err>0 ? 1 : -1; // drifting warmer/cooler than modeled with compressor off -> envelope UA off
-    state.estUaMult[i] = Math.min(2.0, Math.max(0.5, state.estUaMult[i] + dir*0.001*dt));
+  // ---- EKF update step — real covariance-weighted correction, replacing
+  // what used to be a fixed-size nudge in a fixed direction. H=[1,0,0] since
+  // only airTemp (via the sensor-lag proxy above) is ever measured; a stale
+  // reading (comms dropout) skips the update entirely rather than trusting a
+  // held-over value, exactly like a real estimator would.
+  if(state.telemetryStale[i]===0){
+    const R = 0.023; // sensor noise variance: gaussianNoise(0.15)^2 + quantization
+    const S = Ppred[0][0] + R; // innovation covariance (H*Ppred*H' + R)
+    const K = [Ppred[0][0]/S, Ppred[1][0]/S, Ppred[2][0]/S]; // Kalman gain = Ppred*H'/S
+    const xNew = [xPred[0]+K[0]*err, xPred[1]+K[1]*err, xPred[2]+K[2]*err];
+    state.twinP[i] = Ppred.map((row,r)=>row.map((v,c)=>v - K[r]*Ppred[0][c])); // P = Ppred - K⊗Ppred_row0
+    state.twinPredTemp[i] = xNew[0];
+    state.estCapMult[i] = Math.min(1.05, Math.max(0.4, xNew[1]));
+    state.estUaMult[i] = Math.min(2.0, Math.max(0.5, xNew[2]));
+  } else {
+    state.twinP[i] = Ppred;
+    state.twinPredTemp[i] = xPred[0];
+    state.estCapMult[i] = Math.min(1.05, Math.max(0.4, xPred[1]));
+    state.estUaMult[i] = Math.min(2.0, Math.max(0.5, xPred[2]));
   }
 
-  // anomaly detection: this fires on the SLOW trend the estimator has converged
-  // on, not on any single noisy reading — real equipment drift shows up as
-  // estCapMult settling meaningfully away from 1 over hours of runtime; a sensor
-  // problem shows up as residual staying elevated even once capacity looks calibrated.
-  // Both thresholds are maintenance-planning levels, not emergency alarms — the
-  // equipment is still running, just gradually working harder than nameplate.
-  if(!state.maintenanceFlagged[i] && !state.maintenanceVisit[i] && state.compRuntimeHr[i] > 40 && state.estCapMult[i] < 0.93){
+  // anomaly detection, upgraded to use the KF's OWN covariance instead of one
+  // fixed magnitude threshold for every situation: zCap/zUa are genuine
+  // z-scores (how many estimated standard errors the parameter has moved from
+  // nameplate), so a confidently-converged small deviation can flag while a
+  // still-uncertain large one doesn't — closer to "compare likelihood of
+  // explanations given the residual history" than a bare threshold was.
+  const capVar = Math.max(1e-6, state.twinP[i][1][1]);
+  const uaVar = Math.max(1e-6, state.twinP[i][2][2]);
+  const zCap = (1 - state.estCapMult[i]) / Math.sqrt(capVar);
+  const zUa = Math.abs(state.estUaMult[i]-1) / Math.sqrt(uaVar);
+  if(!state.maintenanceFlagged[i] && !state.maintenanceVisit[i] && state.compRuntimeHr[i] > 40 && zCap > 3){
     state.maintenanceFlagged[i] = true;
-    logEvent(`AI twin: ${ZONES[i]} calibrated capacity has settled at ${(state.estCapMult[i]*100).toFixed(0)}% of nameplate after ${state.compRuntimeHr[i].toFixed(0)}h runtime — normal wear range, but worth scheduling a service check before it tightens further.`, true);
+    logEvent(`AI twin: ${ZONES[i]} calibrated capacity has settled at ${(state.estCapMult[i]*100).toFixed(0)}% of nameplate (${zCap.toFixed(1)}σ below nameplate — confidently a real trend, not noise) after ${state.compRuntimeHr[i].toFixed(0)}h runtime — normal wear range, but worth scheduling a service check before it tightens further.`, true);
     dispatchMaintenance(i, "service");
   }
-  if(!state.calibrationFlagged[i] && !state.maintenanceVisit[i] && state.residual[i] > state.residualBaseline[i]*4 && Math.abs(state.estCapMult[i]-1)<0.08){
+  if(!state.calibrationFlagged[i] && !state.maintenanceVisit[i] && state.residual[i] > state.residualBaseline[i]*4 && zCap < 1.5 && zUa < 1.5){
     state.calibrationFlagged[i] = true;
-    logEvent(`AI twin: ${ZONES[i]} sensor residual ${state.residual[i].toFixed(2)}C, ~${(state.residual[i]/state.residualBaseline[i]).toFixed(1)}x baseline with capacity tracking normally — consistent with sensor calibration drift, not equipment. Recommend a calibration check.`, true);
+    logEvent(`AI twin: ${ZONES[i]} sensor residual ${state.residual[i].toFixed(2)}C, ~${(state.residual[i]/state.residualBaseline[i]).toFixed(1)}x baseline with capacity/UA tracking normally (within ${Math.max(zCap,zUa).toFixed(1)}σ of nameplate) — consistent with sensor calibration drift, not equipment. Recommend a calibration check.`, true);
     dispatchMaintenance(i, "calibration");
   }
   // resolution happens when the technician's visit actually completes (stepMaintenance),
