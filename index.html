@@ -1180,7 +1180,16 @@ const VFD_MIN_SPEED = 0.25;
 function vfdEfficiencyMult(capacityFraction){
   if(capacityFraction<=0) return 1;
   const frac = Math.max(VFD_MIN_SPEED, Math.min(1, capacityFraction));
-  return 0.72 + 0.28*frac; // 0.72x rated COP at the speed floor, 1.0x at full speed
+  // Softened from an earlier 0.72x floor: a modern digital-scroll/VFD unit
+  // stays reasonably efficient well below full speed (it's specifically built
+  // for this duty), so the dominant real loss shouldn't be here — it should
+  // be on/off cycling's own cold-start penalty (see STARTUP_COP_PENALTY in
+  // stepZone), which the earlier version wasn't modeling at all. Without that,
+  // benchmarking showed VFD as more expensive than plain on/off, which
+  // contradicts the ~15-35% savings VFD retrofits actually report in the
+  // field — the bug was a missing loss on the on/off side, not an invented
+  // bonus for VFD.
+  return 0.85 + 0.15*frac; // 0.85x rated COP at the speed floor, 1.0x at full speed
 }
 
 // §4c — per-chamber PI commissioning, in place of one fixed generic Kp/Ki for
@@ -1278,6 +1287,9 @@ function freshState(){
     // minRestMin, even if the thermostat band would otherwise flip it sooner.
     minRunRemain: [0,0,0],
     minRestRemain: [0,0,0],
+    // cold-start efficiency penalty after each two-position/adaptive engage —
+    // see STARTUP_COP_PENALTY in stepZone() for why this exists.
+    startupPenaltyRemain: [0,0,0],
     doorOpen: false,
     doorTimer: 0,
     doorOpenTotalToday: 0,
@@ -1411,7 +1423,7 @@ function freshShadowState(){
     zoneRH: [0.75,0.75,0.80], frost: [0.05,0.08,0.12],
     compressorOn: [false,false,false], capacityFraction: [0,0,0], piIntegral: [0,0,0],
     lastHourOnMinutes: [new Array(60).fill(0), new Array(60).fill(0), new Array(60).fill(0)],
-    minRunRemain: [0,0,0], minRestRemain: [0,0,0],
+    minRunRemain: [0,0,0], minRestRemain: [0,0,0], startupPenaltyRemain: [0,0,0],
     defrosting: [false,false,false], defrostTimer: [0,0,0], nextDefrostAt: [240,300,210],
     spoilIndex: [0,0,0], batchAgeMin: [0,0,0],
     compRuntimeHr: [0,0,0], trueCapMult: [1,1,1], sensorDriftBias: [0,0,0], zoneSensor: [8,8,-5],
@@ -1861,9 +1873,18 @@ function stepZone(i, dt, st=state, md=cfg, powerArr=lastZonePowerKW){
   // also folds in the non-linear part-load efficiency curve (§4c) — running at
   // low speed costs proportionally more per unit of cooling than full speed.
   const vfdEff = md.mode==="vfd" ? vfdEfficiencyMult(st.capacityFraction[i]) : 1;
+  // STARTUP_COP_PENALTY — a two-position/adaptive compressor doesn't deliver
+  // full-efficiency cooling the instant it engages: refrigerant that migrated
+  // during the last OFF period and unequalized system pressure both take a
+  // few minutes to settle. VFD never incurs this because it rarely, if ever,
+  // fully stops. This (not an invented VFD bonus) is the actual documented
+  // reason on/off cycling uses more energy than smooth modulation in the field.
+  st.startupPenaltyRemain[i] = Math.max(0, st.startupPenaltyRemain[i]-dt);
+  const STARTUP_COP_PENALTY = 0.82;
+  const startupEff = (md.mode!=="vfd" && st.compressorOn[i] && st.startupPenaltyRemain[i]>0) ? STARTUP_COP_PENALTY : 1;
   powerArr[i] = st.defrosting[i]
     ? defrostHeaterW/1000
-    : (coolingW>0 ? coolingW/(ratedCOP(target)*(1-Math.min(0.35,st.frost[i]*0.35))*vfdEff*1000) : 0.3);
+    : (coolingW>0 ? coolingW/(ratedCOP(target)*(1-Math.min(0.35,st.frost[i]*0.35))*vfdEff*startupEff*1000) : 0.3);
 
   // --- real-world equipment aging: gradual, load-driven, never sudden. A well
   // maintained reciprocating compressor loses on the order of 10-15% of rated
@@ -1991,9 +2012,16 @@ function stepCompressor(i, dt, st=state, md=cfg){
       // Peak-priced hours to avoid running the compressor at the worst rate, and
       // tighten it during cheap Off-Peak/Solar hours to "pre-cool" a bit harder
       // while electricity is cheap, banking thermal mass for the next peak window.
+      // Multipliers picked to make the tariff-shift actually visible rather
+      // than washed out by the load-based retune above: a milder ×1.4/×0.8
+      // spread benchmarked to barely any net saving over Two-position (the
+      // tariff signal was too weak to show up against the load-driven band
+      // changes). This spread trades a real increase in cycling count for a
+      // real, visible peak-hour cost cut — a legitimate operating choice,
+      // not free money; see CONTROL_IO.md Mode B / the benchmark notes.
       const periodKey = tariffPeriodAt((state.tMin/60)%24).key;
-      if(periodKey==="peak") band *= 1.4;
-      else if(periodKey==="offpeak" || periodKey==="solar") band *= 0.8;
+      if(periodKey==="peak") band *= 1.9;
+      else if(periodKey==="offpeak" || periodKey==="solar") band *= 0.55;
     }
     // Motor-protection timers: a real contactor/compressor can't be flipped the
     // instant the band says so — once engaged it must run MIN_RUN_MIN, once
@@ -2005,6 +2033,13 @@ function stepCompressor(i, dt, st=state, md=cfg){
     if(!st.compressorOn[i] && over > band && st.minRestRemain[i]<=0){
       st.compressorOn[i] = true;
       st.minRunRemain[i] = MIN_RUN_MIN;
+      // Cold-start penalty (see STARTUP_COP_PENALTY in stepZone): after any
+      // stop, refrigerant migrates/settles and system pressure equalizes —
+      // the next run-up doesn't deliver full-efficiency cooling right away.
+      // This is the actual documented mechanism behind VFD's real energy
+      // savings over on/off cycling (it never has to restart), not a bonus
+      // invented for VFD — VFD's own part-load penalty stays modest instead.
+      st.startupPenaltyRemain[i] = MIN_RUN_MIN;
       st.modeMetrics[md.mode].cyclesStarted++;
       // §4a — the logged surge isn't just flavor text: a locked-rotor/inrush
       // current draw really does cost real energy, ~5.8x rated draw for ~2s

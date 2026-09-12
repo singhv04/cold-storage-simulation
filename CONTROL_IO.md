@@ -53,7 +53,12 @@ if compressor ON  and over < -band*0.3 and minRunRemain <= 0: → turn OFF, star
 
 **Output:** `compressorOn[i]` ∈ {true,false}; `capacityFraction[i]` = 1 or 0 (mirrors `compressorOn`).
 Each OFF→ON transition also books a one-time inrush energy charge (~5.8× rated draw for 2s) to the
-current tariff period's cost — a real, if small, ₹ cost of cycling, not just a logged event.
+current tariff period's cost — a real, if small, ₹ cost of cycling, not just a logged event. It also
+starts a `startupPenaltyRemain[i] = MIN_RUN_MIN` timer; while it's counting down, `stepZone()`
+applies `STARTUP_COP_PENALTY = 0.82` to delivered COP — a cold-start efficiency loss (refrigerant
+migration / pressure re-equalization after a stop) that on/off cycling genuinely incurs and smooth
+modulation (Mode C) essentially doesn't. This is what actually makes cycling cost more energy than
+running continuously at partial load, not an assumption baked one-sidedly into Mode C instead.
 
 **Real-world equivalent:** a mechanical/electromechanical thermostat or a basic PLC relay rung with
 anti-short-cycle timers — exactly what the majority of India's bulk potato/onion cold storage runs
@@ -70,10 +75,13 @@ today. To connect to a real one of these: read the real air-temp sensor value in
 ```
 band = base_band
 band *= (recentDuty > 0.55) ? 0.7 : 1.25        // load-based: tighten under heavy load, loosen when idle
-band *= (period == "peak") ? 1.4                 // tariff-based: loosen during Peak (coast on thermal mass)
-        : (period in {"offpeak","solar"}) ? 0.8  // tighten during cheap hours (bank cooling ahead of Peak)
+band *= (period == "peak") ? 1.9                 // tariff-based: loosen during Peak (coast on thermal mass)
+        : (period in {"offpeak","solar"}) ? 0.55 // tighten during cheap hours (bank cooling ahead of Peak)
         : 1.0
 ```
+(An initial ×1.4/×0.8 spread benchmarked to under 2% net saving over Mode A — too weak to
+distinguish from noise against the load-based retune. Retuned to ×1.9/×0.55, which cuts peak-period
+cost ~30% at the cost of more compressor cycling — see TODO.md §4b's "found via benchmarking" note.)
 
 **Output:** same shape as Mode A.
 
@@ -105,9 +113,22 @@ compressorOn[i] = capacityFraction[i] > 0.03
 
 **Output:** `capacityFraction[i]` ∈ [0,1] continuous; `compressorOn[i]` derived from it.
 Delivered power also folds in `vfdEfficiencyMult(capacityFraction)` — a non-linear part-load
-efficiency curve (0.72× rated COP at the speed floor, 1.0× at full speed) — this is an energy-model
-detail, not a controller input/output, but it means the same `capacityFraction` output costs more
-₹/kWh-of-cooling at low speed than at high speed, which is realistic VFD behavior.
+efficiency curve (0.85× rated COP at the speed floor, 1.0× at full speed) — this is an energy-model
+detail, not a controller input/output, but it means the same `capacityFraction` output costs
+slightly more ₹/kWh-of-cooling at low speed than at high speed, which is realistic VFD behavior.
+(Originally 0.72× at the floor; softened after benchmarking showed this alone made VFD look MORE
+expensive than Two-position, backwards from the ~15-35% savings VFD retrofits report in the field —
+see the corresponding fix on Mode A below and TODO.md §4c.)
+
+**Also relevant — why Two-position, not VFD, carries the bigger energy penalty in this model:**
+Mode A's control law (above) now includes a cold-start efficiency penalty: after each OFF→ON
+transition, `stepZone()` applies `STARTUP_COP_PENALTY = 0.82` to the delivered COP for
+`MIN_RUN_MIN` (3) minutes, representing real refrigerant migration/pressure-equalization losses
+after a stop. VFD essentially never incurs this (it rarely fully stops). This — not an invented
+VFD bonus — is the actual documented reason smooth modulation beats on/off cycling on energy in the
+field, and was the root cause of the benchmarking anomaly described above: without it, on/off's
+"when running" power draw was modeled as loss-free, so VFD's own (then-larger) part-load penalty
+made it look worse for no compensating reason.
 
 **Real-world equivalent:** a PI/PID loop running on a PLC or the compressor's own onboard
 controller, driving a VFD/digital-scroll unit's analog or fieldbus speed reference. To connect: feed

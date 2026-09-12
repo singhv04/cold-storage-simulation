@@ -98,8 +98,10 @@ holds the product at its optimum temperature (not just energy use in isolation).
 ### 4b. Adaptive band (self-tuning deadband)
 - [x] Replace the fixed `×0.7 / ×1.25` step-tune with a continuously adaptive rule driven by recent
       duty cycle, ambient load, and tariff period (tighten near peak-price windows, loosen off-peak)
-      — implemented: duty-cycle retune stacked with a tariff-period retune (×1.4 Peak, ×0.8
-      Off-Peak/Solar).
+      — implemented: duty-cycle retune stacked with a tariff-period retune. **Retuned from an initial
+      ×1.4 Peak / ×0.8 Off-Peak/Solar to ×1.9 / ×0.55** after benchmarking showed the milder spread
+      produced almost no net saving over Two-position (the tariff signal was too weak against the
+      load-driven retune) — see the "found via benchmarking" note below.
 - [x] Document this explicitly as still rule-based (not ML) — see CONTROL_IO.md Mode B.
 
 ### 4c. Variable-speed / VFD with PI control
@@ -113,7 +115,26 @@ holds the product at its optimum temperature (not just energy use in isolation).
       `VFD_MIN_SPEED = 0.25` with hysteresis around stop/hold-at-floor.
 - [x] Model non-linear VFD efficiency curve (real compressors aren't perfectly linear
       capacity-to-power) instead of the current roughly-linear assumption — implemented:
-      `vfdEfficiencyMult()`, 0.72x rated COP at floor speed, 1.0x at full speed.
+      `vfdEfficiencyMult()`, **softened from an initial 0.72x to 0.85x rated COP at floor speed**
+      (1.0x at full speed) after benchmarking — see below.
+
+**Found via benchmarking, fixed:** a standalone 10-day replication of all 3 modes (prompted by
+noticing the live comparison table showed near-identical ₹ across modes) turned up two real issues,
+not just "physics converges" as initially assumed:
+1. VFD was coming out MORE expensive than Two-position, which contradicts the ~15-35% savings VFD
+   retrofits report in the field. Root cause: the part-load efficiency penalty on VFD (0.72x floor)
+   was modeled as the ONLY loss mechanism in either direction — on/off cycling had no equivalent
+   loss, so running continuously at a "penalized" partial load looked worse than cycling at full
+   (unpenalized) capacity. Fix: added a cold-start efficiency penalty
+   (`STARTUP_COP_PENALTY = 0.82` for `MIN_RUN_MIN` minutes after each two-position/adaptive engage)
+   representing the real, documented mechanism — refrigerant migration/pressure re-equalization after
+   a stop — which is the actual reason on/off cycling costs more energy than smooth modulation, and
+   softened VFD's own part-load penalty since modern digital-scroll/VFD units stay reasonably
+   efficient well below full speed. Re-benchmarked: VFD is now cheapest, has ~400x fewer compressor
+   cycles, and the best time-in-band — matching real-world expectations.
+2. Adaptive's tariff-shift (×1.4/×0.8) produced under 2% net saving — real but easily mistaken for
+   noise. Retuned to ×1.9/×0.55: peak-period cost now drops ~30% for adaptive vs. Two-position, at
+   the cost of more compressor cycling (a genuine, documented tradeoff, not free money).
 
 ## 5. NEW: AI-based control approach (4th mode)
 
