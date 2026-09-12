@@ -1414,6 +1414,11 @@ function freshState(){
 
     // ---- twin state estimator: the twin's own belief + its estimate of plant parameters ----
     twinPredTemp: [8, 8, -5],       // twin's internal AIR-temp model prediction (matches what the sensor reads)
+    // twin's own lag-filtered prediction — see stepTwinEstimator()'s bug-fix
+    // comment for why this exists: comparing telemetry against this instead
+    // of raw twinPredTemp is what stopped the estimator misreading normal
+    // sensor lag as equipment drift.
+    twinPredSensor: [8, 8, -5],
     twinProductTemp: [8, 8, -5],    // twin's derived PRODUCT-temp estimate, driven off its own air estimate
     estCapMult: [1,1,1],            // estimated compressor-capacity multiplier vs nameplate
     estUaMult: [1,1,1],             // estimated envelope UA multiplier vs design
@@ -2503,8 +2508,36 @@ function stepTwinEstimator(i, dt){
   const coupling = productCouplingKJperMinK(i) * 1000/60 * (state.twinPredTemp[i]-state.twinProductTemp[i]);
   state.twinProductTemp[i] += (coupling*(dt*60)/1000)/productCapacityKJperK(i);
 
+  // BUG FOUND AND FIXED DURING AUDIT: this used to compare telemetry directly
+  // against twinPredTemp (the twin's raw, LAG-FREE physics prediction). But
+  // telemetry itself passes through a real ~4-minute sensor-housing lag (see
+  // stepZone's zoneSensor filter) before it's ever reported — so telemetry
+  // legitimately reads warmer than the twin's instantaneous prediction any
+  // time the room is actively cooling, and colder any time it's warming back
+  // up. That's pure, expected sensor lag, not a capacity/UA error — but the
+  // parameter-update rule below couldn't tell the difference, and because the
+  // compressor being ON almost always coincides with "actively cooling" (and
+  // thus with telemetry reading warm-biased), it kept reading this as "the
+  // compressor is weaker than assumed" tick after tick, EVERY session,
+  // dragging estCapMult to its floor (0.4) and estUaMult to its floor (0.5)
+  // within about 10 days regardless of actual (unchanged) true capacity —
+  // confirmed via a 15-day headless replay of the real code: estCapMult fell
+  // to 0.46-0.53 and estUaMult flatlined at its floor, while trueCapMult
+  // stayed ~0.998-1.001 throughout. This also meant the maintenance-flagging
+  // threshold (`estCapMult<0.93`) fired almost immediately in every session,
+  // regardless of actual equipment condition.
+  //
+  // Fix: give the twin its own lag-filtered "predicted sensor reading"
+  // (twinPredSensor, same time constant as the real sensor housing) and
+  // compare telemetry against THAT instead of the raw prediction — the
+  // correct thing to do whenever you know your sensor has its own transfer
+  // function. This cleanly separates "known, modeled sensor lag" from "the
+  // actual unknown to estimate" the same way it's separated in a real system.
+  const SENSOR_LAG_TAU_MIN = 4; // must match stepZone's SENSOR_HOUSING_TAU_MIN
+  state.twinPredSensor[i] += (state.twinPredTemp[i]-state.twinPredSensor[i])/SENSOR_LAG_TAU_MIN * dt;
+
   // residual between the twin's belief and telemetry — the only signal the twin has
-  const err = state.telemetry[i] - state.twinPredTemp[i];
+  const err = state.telemetry[i] - state.twinPredSensor[i];
   state.residual[i] = state.residual[i]*0.9 + Math.abs(err)*0.1;
 
   // correction step: nudge the belief toward telemetry (measurement update),

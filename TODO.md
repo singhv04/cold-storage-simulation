@@ -83,6 +83,24 @@ holds the product at its optimum temperature (not just energy use in isolation).
       with the fix (drawing the noise ONCE per zone per tick and sharing it across the live run and
       all shadows, the same way ambient/tariff/door disturbances already are), it never flipped in
       200 trials. Fixed in `tick()` (`sharedWearNoise`) and `stepZone()`'s new `wearNoise` parameter.
+- [x] **Found and fixed a major estimator bug via the headless full-system audit** (prompted by
+      noticing `estCapMult`/`estUaMult` converging to implausible values like 0.47-0.63 when true
+      capacity never moved off ~1.0): the estimator compared telemetry directly against
+      `twinPredTemp` — the twin's raw, LAG-FREE physics prediction. But telemetry itself passes
+      through a real ~4-minute sensor-housing lag before being reported, so it legitimately reads
+      warmer than the twin's instantaneous prediction any time the room is actively cooling (and
+      colder any time it's warming back up) — pure, expected sensor lag, not a capacity/UA error.
+      Because "compressor ON" almost always coincides with "actively cooling," this biased the
+      residual the SAME direction, tick after tick, every session — dragging `estCapMult` to its
+      floor (0.4) and `estUaMult` to its floor (0.5) within ~10 days regardless of actual unchanged
+      true capacity, and firing the maintenance-flag threshold (`estCapMult<0.93`) almost immediately
+      in every session regardless of real equipment condition. Fixed by giving the twin its own
+      lag-filtered "predicted sensor reading" (`twinPredSensor`, same time constant as the real
+      sensor) and comparing telemetry against THAT instead — separating known, modeled sensor lag
+      from the actual unknown being estimated, same as a real system would. Verified across all 9
+      products via a 15-day headless replay: `estCapMult` now settles at 1.01-1.05 (vs. true 1.00),
+      no spurious maintenance/calibration flags fire in any of the 9 runs (previously all 9 would
+      have flagged falsely). See `stepTwinEstimator()`.
 
 ## 3. Environmental & tariff inputs
 
