@@ -329,6 +329,44 @@ produce"'s `turnoverFraction`/`deliveryIntervalHr` to be less of an outlier vs. 
 or (c) add an explicit receiving-dock "pre-cool before put-away" process (a real facility feature)
 that isn't modeled at all right now. Left open for a product/scope decision.
 
+## 4f. Second audit pass (prompted by "I still see a lot of bugs, deep dive and fix them")
+
+Re-ran the same headless-replay-of-the-real-code method, widened to a 4-season × 9-product sweep (36
+combinations, 20 sim-days each) plus new checks this pass hadn't covered yet: bill-ledger
+reconciliation against the header's own totals, forecast-array sanity, open-event leak detection, a
+60-day single-scenario long-run, and a mode/product/season switching stress test.
+
+- [x] **Found and fixed a real, universal billing bug**: the per-zone/day/tariff-period energy
+      ledger (what the clickable "Total Bill breakdown" modal reads from) undercounted the header's
+      own `costTotal`/`energyKWhTotal` figures by ~1-2% in **all 36 of 36** season×product
+      combinations tested. Root cause: the one-time inrush/surge energy charged whenever a
+      Two-position/Adaptive relay engages (§4a) was added to the running bill totals but never folded
+      into the per-zone ledger the breakdown modal actually sums from — so the two views of "the
+      bill" silently drifted apart, worse the more the compressor cycled. Fixed by accumulating
+      `pendingLiveInrushKWh` in `stepCompressor()` and folding it into the same per-zone ledger bucket
+      at the point `tick()` builds it, then clearing it — verified across all 36 combinations that the
+      ledger now reconciles exactly (within floating-point tolerance) with the running totals.
+- [x] Verified (no bug found): a `pendingEvents['defrost:N']` entry open at an arbitrary snapshot
+      point is expected — a zone genuinely mid-defrost-cycle at that instant — confirmed it closes
+      normally a few ticks later, not a leak.
+- [x] Verified (no bug found): `doorTimer` can sit at a small negative residual after the door
+      closes, but it's only ever read while `doorOpen` is true and gets freshly reset on the next
+      delivery — cosmetic leftover, not a functional issue.
+- [x] Verified (no bug found, and this is now CORRECT rather than broken): over a 60-day single-
+      product run, neither the maintenance-dispatch nor calibration-dispatch path ever fired.
+      Before the §2 twin-estimator fix this would have been backwards (falsely firing almost
+      immediately every session); now that `estCapMult` correctly tracks true capacity, actual wear
+      this slow (~10% loss per ~16,000 running hours) legitimately shouldn't trigger a service flag
+      within any realistic play session — matching how real compressor service intervals work
+      (months to years, not days). Confirmed the calibration path is similarly dormant because
+      `sensorDriftBias`'s periodic reset keeps residual comfortably under its 4× trigger threshold in
+      normal operation. Neither is a demo promise this app makes explicitly, so left as-is.
+- [x] Verified (no bug found): `state.events` is capped at 4000 entries (oldest shifted out), so no
+      unbounded memory growth over long sessions.
+- [x] Verified (no bug found): a 30-day stress test that switches controller mode, product, AND
+      season every 500 sim-minutes (much more aggressive than any real interactive session) produces
+      no NaN/Infinity/instability in any of the live state or 3 parallel shadow states.
+
 ## 5. NEW: AI-based control approach (4th mode)
 
 - [ ] Define what "AI-based" means concretely for this sim — proposed scope: a learned policy

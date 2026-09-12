@@ -1907,6 +1907,13 @@ function stepForklift(dt){
 // Per-zone electrical draw this tick (kW), filled in by stepZone/stepCompressor
 // so the UI and energy ledger read the same physically-derived numbers.
 let lastZonePowerKW = [0.3, 0.3, 0.3];
+// One-time inrush energy (see stepCompressor's §4a comment) charged to the live
+// bill totals the instant a relay engages, but not yet folded into the
+// per-zone/day/period ledger the "Total Bill breakdown" modal reads from —
+// accumulated here and added into that ledger at the end of the same tick, so
+// the two views of the bill can never silently drift apart. See tick()'s bug-fix
+// comment near the ledger-build loop for how this was found.
+let pendingLiveInrushKWh = [0, 0, 0];
 
 // Core per-minute physics for one zone — three coupled energy balances (wall,
 // air, product), each integrated against ITS OWN thermal mass from ITS OWN
@@ -2311,6 +2318,7 @@ function stepCompressor(i, dt, st=state, md=cfg){
         if(isLive){
           state.energyKWhToday += inrushKWh; state.costToday += inrushCost;
           state.energyKWhTotal += inrushKWh; state.costTotal += inrushCost;
+          pendingLiveInrushKWh[i] += inrushKWh; // folded into the per-zone ledger at end of tick()
         }
         const mm = st.modeMetrics[md.mode];
         mm.costByPeriod[period.key].kwh += inrushKWh;
@@ -2395,14 +2403,28 @@ function tick(dtMin){
 
   // per-zone, per-day, per-tariff-period ledger — this is what the clickable
   // Total Bill breakdown filters against, exact rather than reconstructed later.
+  //
+  // BUG FOUND AND FIXED DURING AUDIT: this ledger only ever counted
+  // `lastZonePowerKW`'s continuous running draw — it never included the
+  // one-time inrush/surge energy charged in stepCompressor whenever a relay
+  // engages (§4a). Since costTotal/energyKWhTotal DID include it, the two
+  // views of "the bill" silently drifted apart over time — confirmed via a
+  // 20-day headless replay across all 4 seasons × 9 products: the ledger sum
+  // undercounted the true total by ~1-2% in every single one of the 36
+  // combinations tested, growing with cycle count (more relay engages = more
+  // untracked inrush energy). Fixed by folding `pendingLiveInrushKWh`
+  // (accumulated in stepCompressor, see its declaration) into the same
+  // per-zone bucket here, then clearing it — so the "Total Bill breakdown"
+  // modal can never again silently disagree with the header's own totals.
   const ledgerDay = state.dayCount;
   if(!state.energyLedger[ledgerDay]) state.energyLedger[ledgerDay] = {};
   if(!state.energyLedger[ledgerDay][period.key]) state.energyLedger[ledgerDay][period.key] = [{kwh:0,cost:0},{kwh:0,cost:0},{kwh:0,cost:0}];
   for(let i=0;i<N_ZONES;i++){
-    const zKwh = lastZonePowerKW[i]*(dtMin/60);
+    const zKwh = lastZonePowerKW[i]*(dtMin/60) + pendingLiveInrushKWh[i];
     const bucket = state.energyLedger[ledgerDay][period.key][i];
     bucket.kwh += zKwh;
     bucket.cost += zKwh*BASE_TARIFF*period.mult;
+    pendingLiveInrushKWh[i] = 0;
   }
 
   state.energyHistory.push({
