@@ -6,45 +6,81 @@ explicit set of outputs. If you're integrating this against real hardware later,
 seam: replace the *inputs* with a real feed and the *outputs* with a real actuator command, and the
 control logic itself does not need to change.
 
-Code locations: `stepCompressor(i, dt)` in `simulation/cold_storage_simulation.html` (~line 1822
-at time of writing — search for `function stepCompressor`).
+Code: `simulation/cold_storage_simulation.html` — `stepCompressor()` (all modes), `rackRelayStep()`,
+`rackContinuousStep()`, `aiPlanZone()` / `aiRollout()` (MPC, AI), `learnerObserve()` (AI).
+
+## Controller I/O reference — current, authoritative
+
+Everything below is per chamber `i` (A Receiving, B Bulk, C Deep freeze); each chamber has its own
+controller instance, product, setpoint and compressor rack. Later sections in this file are the
+design history; where they disagree with this section, this section is current.
+
+### What the algorithms control (outputs)
+
+| Controller | Decision it makes | How often | Turned into actuator commands by |
+|---|---|---|---|
+| Rule-based (Two-position) | **How many fixed-speed compressors run** (0…n) — a step thermostat | every 1 min | `rackRelayStep`: picks *which* units (lead-lag by run-hours), contactor on/off per unit |
+| Adaptive band | Same stage count, **plus its own setpoint shift** (−0.3·band cheap hours, +0.35·band peak) **and differential width** | every 1 min | same as Rule-based |
+| PID (VFD) | **Capacity demand 0–100 % of the chamber's plant** (PI output) | every 1 min | `rackContinuousStep`: VFD lead speed 25–100 % + number of fixed lag units on |
+| MPC | **Capacity demand 0–100 %**, the first step of a 12-hour plan | re-planned every 5 min | same rack logic as PID |
+| AI (self-learning) | Same as MPC | re-planned every 5 min | same rack logic as PID |
+
+**Not controlled by any algorithm** (fixed plant logic, identical for all five): defrost method and
+timing (chosen by coil temperature, every 6-8 h), condenser fans (staged with compressors on relay
+racks, floating with load on VFD racks), evaporator fans (continuous / EC speed follows load),
+anti-short-cycle timers (5 min run, 3 min rest, ≤6 starts/h per unit), the 55 °C high-pressure
+safety trip, lights, doors, deliveries and put-away.
+
+So the single manipulated variable is **cooling capacity per chamber** — a stage count (relay racks)
+or a capacity fraction (VFD-lead racks). Everything else follows from it.
+
+### What the algorithms read (inputs)
+
+| Input (per chamber unless noted) | Real-world source | Rule | Adaptive | PID | MPC | AI |
+|---|---|:-:|:-:|:-:|:-:|:-:|
+| Return-air temperature — lagged ~4 min, ±0.3 °C offset, noise (`measuredAirC`) | Duct/wall RTD on the BMS | ✔ | ✔ | ✔ | | |
+| Product-core temperature — ±0.2 °C offset, noise, 15-min filter (`measuredProductC`) | Pulp/core probe | | | | ✔ | ✔ |
+| Product target and band | Configured per chamber | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Air-setpoint trim = respiration ÷ air-product coupling (≤ ½ band) | Commissioning setting | ✔ | ✔ | ✔ | | |
+| Outdoor temperature and humidity | Weather station at the condenser | | | | ✔ | ✔ |
+| Room humidity, coil frost level | RH sensor, coil ΔP / frost sensor | | | | ✔ | ✔ |
+| Time of day → tariff period | DISCOM ToD schedule | | ✔ | | ✔ | ✔ |
+| Demand charge, this month's MD so far, contract demand | Trivector meter / tariff order | | | | ✔ | ✔ |
+| Recent and day-by-hour duty cycle | Controller's own history | | ✔ | | | |
+| Shift roster, booked deliveries (feed-forward) | WMS / dock booking | | | ✔ | ✔ | ✔ |
+| Defrost schedule, put-away schedule, direct deliveries | Plant controller / WMS | | | | ✔ | ✔ |
+| Other chambers' planned power (to avoid peaking together) | Supervisory controller | | | | ✔ | ✔ |
+| Seasonal ambient curve, clear-sky roof solar | Climate normals / solar model | | | | ✔ | ✔ |
+| Nameplate UA, capacity, respiration, COP model | Drawings / datasheets | | | (PI tuning) | ✔ | ✔ (starting point) |
+| **Learned:** extra heat, insulation correction, hour-of-day heat, delivery share, put-away delay, weather offset, per-chamber margin | Online learning from the inputs above (`learnerObserve`) | | | | | ✔ |
+
+**Never read by any controller:** true temperatures without sensor error, the hidden as-built
+deviations (insulation, capacity, respiration), true equipment wear, the day's actual weather before
+it happens.
+
+### What each algorithm optimises
+
+- **Rule / Adaptive:** keep air inside the thermostat differential (Adaptive also shifts the
+  setpoint by tariff period). No cost model.
+- **PID:** drive air-temperature error to zero (lambda-tuned PI + feed-forward). No cost model.
+- **MPC / AI:** minimise over 12 hours: ₹ energy at ToD rates + ₹ increase in the monthly
+  maximum-demand charge + ₹ compressor restarts + move-suppression cost + penalty × °C·min of
+  product outside its band (priced at shelf-life value while delivered stock pulls down) + penalty
+  for supply air too cold − value of cold stored at the end. AI uses its learned model in this
+  calculation; MPC uses nameplate values.
+
+### What is measured as the result (benchmark outputs)
+
+Total bill (energy + demand), kWh, peak kVA, % of time each chamber's **true** product core is inside
+its band, °C·min outside band, compressor starts, shelf-life consumed — see "Current benchmark".
 
 ---
 
-## Shared inputs (all modes read these)
+## Historical sections
 
-| Input | Simulated source today | Real-world source it stands in for |
-|---|---|---|
-| `airTemp[i]` (chamber air temperature) | Physics engine's AIR node | A wall/duct-mounted RTD or thermistor, via the chamber's BMS/PLC analog input |
-| `cfg.product.target` | Selected product profile | The setpoint configured on the thermostat/BMS for the active SKU |
-| `cfg.product.band` | Selected product profile | The configured hysteresis/deadband width |
-| `dt` (tick size, minutes) | Simulation loop | Real controller scan/loop interval (typically sub-second to a few seconds for a PLC) |
-| `state.tMin` → hour-of-day → `tariffPeriodAt(hour)` | Hardcoded 4-band ToU schedule (`TARIFF_BANDS`) | The real DISCOM's actual industrial/commercial ToU tariff schedule (state-specific — see §3 in TODO.md) |
-| `ambientNow().temp` | Physics engine's diurnal/seasonal curve | Outdoor air temperature at the condenser — now used by ALL modes (§4d) via `condenserApproach()`/`effectiveCOP()` for both COP and the high-head-pressure safety cutout, not just VFD |
-
-**Note on what real controllers do NOT get:** none of the three current modes read
-`zoneTemp[i]` (product core temperature) directly — only air temperature. This is
-intentional and matches real refrigeration control: the compressor reacts to the air/suction-side
-sensor it has, not to a probe buried in the product (most facilities don't have one per pallet).
-Product temperature is a *consequence* of how well air temperature is held, not a direct input to
-these three modes. The planned AI mode is explicitly allowed to use more than this (see below) —
-that's the point of comparing it against these three fairly.
-
-## Shared outputs (all modes produce these)
-
-| Output | What it drives in the simulation | Real-world actuator it stands in for |
-|---|---|---|
-| `state.compressorOn[i]` (bool) | Whether `stepZone` applies `coolingW` this tick | Contactor/relay coil energized → compressor motor runs |
-| `state.capacityFraction[i]` (0–1) | Scales `coolingW` and, in VFD mode, the part-load efficiency penalty | 0/1 for a fixed-speed compressor; 0.0–1.0 commanded speed for a VFD/digital-scroll drive (via 0–10V, 4–20mA, or a fieldbus speed reference) |
-
-**Shared safety layer (§4d, new):** before any mode-specific control law runs, `stepCompressor()` now
-checks a high-head-pressure cutout common to all three modes — if condensing temperature (ambient +
-condenser approach) exceeds 55°C, the compressor is forced off for a 5-minute cooldown regardless of
-what the controller wants, exactly like a real high-pressure switch overriding the thermostat/BMS. A
-fixed-speed condenser fan (Modes A/B) is structurally closer to this limit than VFD's floating head
-pressure — a realistic emergent difference, not a mode-specific rule. State: `hpTripRemain[i]`.
-
----
+Everything below records how each mode evolved and why. Inputs/outputs in older sections (e.g. one
+compressor per chamber, exact air temperature, one product for all chambers) are superseded by the
+reference above.
 
 ## Mode A — Two-position (on/off relay), `cfg.mode === "rule"`
 
