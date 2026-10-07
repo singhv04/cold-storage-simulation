@@ -76,7 +76,7 @@ physics, multi-compressor staging — see their own sections below for why).
       comparison results earlier this session were verified against the current values, and this sim
       has no access to product-specific lab trial data that would justify a precise per-cultivar
       refit over the current defensible, documented-shape values.
-- [ ] Implement true independent per-zone setpoints (Zone A/B/C should be able to hold different
+- [x] Implement true independent per-zone setpoints — DONE in §5f (per-chamber products). Was: (Zone A/B/C should be able to hold different
       products at different targets simultaneously — currently all 3 chambers share the one active
       product's setpoint, per README's stated known limitation). **Explicitly out of scope for now**
       (per direct instruction) alongside real-hardware integration (§7) — everything else in this
@@ -287,7 +287,7 @@ fresh read of the code (not just prior docs) turned up several genuine gaps. Imp
 **Follow-up round — 3 of these 4 were subsequently implemented** (prompted by "now fix all the open
 items listed"), leaving only the one requiring genuine architecture restructuring:
 
-- [ ] **Multiple staged compressors per zone (lead-lag).** STILL DEFERRED — real facilities of any
+- [x] **Multiple staged compressors per zone (lead-lag).** DONE in §5c (was: STILL DEFERRED) — real facilities of any
       size often run 2+ smaller compressors per chamber rather than one large on/off or VFD unit. This
       would require restructuring the per-zone `compressorOn[i]`/`capacityFraction[i]` scalars into
       per-unit arrays throughout `stepCompressor`/`stepZone`/the twin estimator/UI — a significant
@@ -498,7 +498,7 @@ behind it. Full control law and I/O contract documented in `CONTROL_IO.md` Mode 
       Compressor-wear-aware scheduling (adapting to equipment age) was NOT built — would need the
       shadow to also run a twin-equivalent capacity estimate, which conflicts with the "shadows skip
       the twin layer" design (§0/§6) and was judged not worth the added complexity for this round.
-- [ ] **Replace/feed the Step-6 advisory rule-checker** — NOT done. The hand-written advisory
+- [x] **Replace/feed the Step-6 advisory rule-checker** — DONE in §5c: `aiPlanAdvisories()` reads the MPC's live (or parallel-run) 12 h plan. Was: NOT done. The hand-written advisory
       generator (`runAdvisories()`) still only reads the LIVE run's twin state, independent of which
       mode is selected; Mode D's own planning logic was never wired to feed or replace it. Left open —
       the core ask (a genuine, fairly-benchmarked 4th control mode) was judged higher priority than
@@ -548,6 +548,88 @@ relay cycling); the further value of *prediction* on top of already-good continu
 inherently capped by how much thermal "storage" a product's own allowed band provides — matching
 real-world reports that MPC's incremental savings over well-tuned VFD/PID refrigeration are
 typically single-digit percent, not the same order of magnitude as the on/off-to-VFD jump.
+
+## 5b. Mode D v2, demand charges, commercial scale — IMPLEMENTED
+
+Prompted by "why is AI/PID only ~₹5k better than rule-based over 4-5 months?". Root causes found
+by headless replay: the demo facility's whole bill was only ₹45k-1L per 4-5 months; almost all
+of the saving came from VFD hardware shared by PID and AI; and AI v1 wasn't shifting load at all
+(identical Peak kWh under flat vs ToD tariffs). Done:
+
+- [x] Maximum-demand (₹/kVA·month) charge with block metering, contract-demand floor and excess penalty
+- [x] AI planner redesigned: 12 h horizon, 7-stage plan, terminal inventory value, plant-scaled
+      penalty with band margin, supply-air low limit, demand + restart costs, zones coordinated
+- [x] State/DISCOM selector: 14 regions with energy rate, ToD bands and demand charge each
+- [x] Commercial facility (~2,650 t) with per-product plant sizing and heat of respiration
+- [x] Restart losses + run/rest timers for VFD/AI (fairness fix)
+- [x] "Product kept in safe range" scoreboard (rule / PID / AI), per-chamber time-in-range metric
+- [x] Found and fixed on the way: put-away artifact (air-temp blend, fired on outbound trucks,
+      live-run only); fixed 8/8/−5 °C start; twin missing air↔product coupling; forecast
+      instability at commercial scale; reset ignoring the dropdowns' current values
+- [x] Tomato/summer PID-beats-AI case — resolved in §5c. Root cause was not the step size: the
+      planner couldn't see put-away heat landing in the bulk chamber.
+- [x] VFD/PID ~240 starts/day — resolved in §5c with lead-lag racks, a 1.4x VFD lead, lambda-tuned
+      PI and realistic anti-short-cycle limits (now 10-50 starts/day across the whole 5-10-unit plant).
+- [x] Contract demand — now user-settable (Controls), plus a per-controller "Right-sized contract"
+      column with the annual demand-charge saving (§5c).
+
+See CONTROL_IO.md "Mode D v2" for the control law and the 11-scenario benchmark table.
+
+## 5c. Staged racks & realism pass — IMPLEMENTED
+
+Prompted by "fix all the remaining issues, add multiple staged compressors, make it close to the
+real world". Done (details in CONTROL_IO.md "Staged racks & realism pass (v3)"):
+- [x] Lead-lag compressor racks per chamber: relay step-thermostat racks and VFD-lead racks,
+      run-hour rotation, per-unit anti-short-cycle (5/3/10 min), star-delta / DOL / soft starters
+- [x] PI commissioned by lambda tuning per chamber (Kp = 1/band limit-cycled at commercial scale)
+- [x] Evaporator fans with fan heat, EC fans on VFD racks; standby draw split out
+- [x] Put-away heat lands in the destination chamber; AI forecast models put-away for both
+- [x] Frost and dehumidification scale with coil load; wear on equivalent full-load hours;
+      per-unit contactor wear
+- [x] Twin forecast "at current duty" instead of a full-capacity thermostat
+- [x] Contract demand user-settable + per-controller right-sized contract and annual saving
+- [x] Advisory panel driven by the MPC's actual plan
+- [x] Bugs fixed on the way: stage-ladder droop (bulk tomato out of band under relay), equal-size
+      VFD rack hunting, contract override leaking across facility presets
+- [ ] Still parked by earlier instruction: independent per-chamber setpoints; multi-node
+      stratification within a chamber; real-hardware integration (§7)
+- [x] Air setpoint trim for respiring produce (relay + PID): air setpoint = target − respiration ÷
+      coupling (≤ ½ band). PID potato in-range 92.7% → ~96%.
+- [x] Thermostat bug: single-unit cut-in sat at target + whole product band (the quality limit);
+      now a differential centred on the setpoint. Demo Zone A under Two-position: 23% → 93% in range.
+- [x] Adaptive band's tariff strategy moved from band width to a setpoint schedule (pre-cool in
+      cheap hours, float up at Peak) — band width stopped moving the mean once the thermostat was centred.
+
+## 5d. MPC renamed + self-learning AI mode — IMPLEMENTED
+
+Prompted by "is the AI self-improving? then what's the purpose of AI" — it wasn't; it was an
+optimizer with a fixed model. Done: renamed it "Predictive optimizer (MPC)"; added mode "ai" = MPC +
+online learning (RLS plant model, hour-of-day heat table, delivery/put-away learning, weather
+offset, outcome-tuned per-chamber margins); hidden as-built deviations so learning has a real
+target; AI learning panel; twin alarms baselined at commissioning. See CONTROL_IO.md "Mode E".
+- [ ] Open: learned capacity is biased low from closed-loop data — could be fixed with deliberate
+      excitation (brief capacity steps at low-cost hours) or instrumental-variable estimation.
+- [ ] Open: add slow building drift (condenser fouling, seal ageing) so the value of continuous
+      learning over months shows up, not just one-time calibration.
+
+## 5e. Realism audit — IMPLEMENTED
+
+Prompted by "keep everything as close to real-world as possible; deep dive for false assumptions".
+Fixed: defrost method by coil temperature; lift-based COP with head-pressure floor; evaporator
+capacity ∝ (air − coil temperature); calendar seasons; roof sol-air gain; transpiration-driven RH
+and room-RH latent load; Bulk/Deep-freeze door openings and lighting; controllers on real sensors
+(offset, lag, noise) with a filtered probe for MPC/AI. Details: CONTROL_IO.md "Realism audit (v4)".
+- [ ] Open (realism): ammonia plant with evaporative condensers as a facility option
+- [ ] Open (realism): grid outages + DG-set backup (₹20-25/kWh) on rural feeders
+- [ ] Open (realism): electricity duty / fixed charges / FAC on the bill
+
+## 5f. Per-chamber products, location climate, controller fixes — IMPLEMENTED
+
+Prompted by "fix all the issues first, also keep it configurable to select the type of product
+inside, location etc". Per-chamber products with direct delivery streams; location sets climate
+(13 city normals) and design temperature as well as tariff; pull-down protocol, move suppression,
+per-chamber margin skip, learner validation/fallback. See CONTROL_IO.md "Configurability &
+controller fixes (v5)".
 
 ## 6. Comparison & scoring framework (tariff × optimum-temperature)
 

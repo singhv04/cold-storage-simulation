@@ -7,7 +7,7 @@ A self-contained, browser-based simulation of a 3-chamber Indian cold storage fa
 
 ## What it is
 
-This simulates one facility with 3 chambers:
+This simulates one facility with 3 chambers, **each holding its own product at its own setpoint** (e.g. potato in Bulk, frozen meat in Deep-freeze), at a **selectable location** whose state sets both the tariff and the climate, — by default a commercial-scale store (~2,650 t) whose refrigeration plant is sized for the selected product; the original small demo rooms (~35 t) are still selectable:
 
 - **Zone A — Receiving**: the only chamber with a dock door; inbound trucks arrive here on a booked schedule tied to the selected product's real delivery cadence.
 - **Zone B — Bulk racks**: general chilled/produce storage.
@@ -20,8 +20,10 @@ On top of the physics sits a **closed-loop digital twin**: the "smart" layer nev
 ## Real-world grounding
 
 - **9 product profiles**, each with real specific heat (derived from water content via Siebel's equation), realistic storage targets, and shelf-life kinetics — including 5 Indian items (potato, onion, tomato, banana, mango) with correct chilling-injury-aware targets (tomato/banana/mango are deliberately held at 12–14°C, not near 0°C).
-- **3 controller strategies**: Two-position on/off (the India industry default — matches the country's dominant bulk potato/onion cold storage), Adaptive band, and Variable-speed/VFD continuous modulation (standard in modern pharma/organized-retail cold chain).
-- **India-tuned ambient model**: 4 seasons (Summer, Monsoon, Post-monsoon, Winter), asymmetric diurnal temperature curve, and a time-of-use electricity tariff.
+- **5 controller strategies**, run side by side on identical conditions: Two-position on/off (the India industry default), Adaptive band, Variable-speed PI (PID/VFD), **Predictive optimizer (MPC)** — a 12-hour economic model-predictive controller optimizing energy, maximum-demand charges and restart losses against keeping product in its safe band — and **AI (self-learning)**, the same planner plus online learning of the building's real heat loads, delivery and put-away patterns, weather and per-chamber safety margins. The simulated building deliberately differs from its spec sheet (hidden per-run deviations) so there is something real to learn; an AI learning panel shows learned vs true values. A live scoreboard shows each controller's % of time in the safe range and total bill.
+- **Real plant layout**: each commercial chamber has a rack of 2-4 compressors staged lead-lag (fixed-speed step-thermostat racks for the relay modes, a variable-speed lead plus fixed lags for PID/AI), with real anti-short-cycle limits, star-delta/DOL/soft starters, evaporator fan heat, and a PI loop commissioned by lambda tuning.
+- **Real-world physics checked line by line** (see CONTROL_IO.md "Realism audit"): lift-based COP with a head-pressure floor, coil output that falls as room air nears coil temperature, defrost method chosen by coil temperature (none / off-cycle / electric), roof solar gain, produce transpiration keeping rooms at 80-90% RH, door openings and lighting in every chamber, controllers acting on real sensors with offsets and lag, and hidden as-built deviations from the spec sheet.
+- **India-tuned ambient model**: 4 fixed seasons or a real calendar (monthly climate normals, seasons changing through the run), asymmetric diurnal temperature curve, and 14 selectable state-DISCOM tariffs, each with time-of-day energy rates and a maximum-demand (₹/kVA·month) charge.
 - **Realistic scheduling, not random events**: dock appointments booked from the product's real delivery interval, two proper worker shifts with headcount-driven heat load, maintenance dispatched with a realistic lead time (not instant), forklift put-away/outbound trips with real travel time between chambers, and gradual (not sudden) equipment wear.
 
 ## Using it
@@ -34,4 +36,4 @@ Open `simulation/cold_storage_simulation.html` in any browser — no server or b
 
 ## Known limitations
 
-This is a simulation, not a connected system — there is no real hardware behind it. All 3 chambers currently share one active product's setpoint (per-zone independent setpoints aren't implemented). See the in-app design summary for the full list.
+This is a simulation, not a connected system — there is no real hardware behind it. Each chamber is modelled as one well-mixed room (no stratification or hot spots). See the in-app design summary and CONTROL_IO.md "Realism audit" for the full list of what is still simplified.
